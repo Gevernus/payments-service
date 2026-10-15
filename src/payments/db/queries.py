@@ -6,8 +6,21 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import (
+    Float,
+    Integer,
+    String,
+    bindparam,
+    column,
+    delete,
+    func,
+    select,
+    text,
+    tuple_,
+    update,
+)
+from sqlalchemy.dialects.postgresql import JSONB, insert
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from payments.db.models import Outbox, Payment
@@ -94,21 +107,72 @@ async def add_outbox_event(
     await s.flush()
 
 
+_CLAIM = (
+    text(
+        """
+        WITH due AS MATERIALIZED (
+          SELECT id FROM outbox WHERE available_at <= now()
+          ORDER BY available_at LIMIT :batch FOR UPDATE SKIP LOCKED)
+        UPDATE outbox o SET attempts = o.attempts + 1,
+                            available_at = now() + make_interval(secs => :lease)
+        FROM due WHERE o.id = due.id
+        RETURNING o.id, o.payment_id, o.event_type, o.routing_key, o.payload, o.headers,
+                  o.attempts
+        """
+    )
+    .bindparams(bindparam("batch", type_=Integer), bindparam("lease", type_=Float))
+    .columns(
+        column("id", PG_UUID(as_uuid=True)),
+        column("payment_id", PG_UUID(as_uuid=True)),
+        column("event_type", String),
+        column("routing_key", String),
+        column("payload", JSONB),
+        column("headers", JSONB),
+        column("attempts", Integer),
+    )
+)
+
+
 async def claim_outbox(s: AsyncSession, *, batch: int, lease_s: float) -> list[ClaimedEvent]:
     """Lease up to `batch` due outbox rows."""
-    raise NotImplementedError
+    rows = (await s.execute(_CLAIM, {"batch": batch, "lease": lease_s})).all()
+    return [
+        ClaimedEvent(
+            id=row.id,
+            payment_id=row.payment_id,
+            event_type=row.event_type,
+            routing_key=row.routing_key,
+            payload=row.payload,
+            headers=row.headers or {},
+            attempts=row.attempts,
+        )
+        for row in rows
+    ]
 
 
 async def delete_published(s: AsyncSession, published: Sequence[tuple[UUID, int]]) -> int:
     """Delete published rows, fenced by (id, attempts)."""
-    raise NotImplementedError
+    if not published:
+        return 0
+    result = await s.execute(
+        delete(Outbox).where(tuple_(Outbox.id, Outbox.attempts).in_(list(published)))
+    )
+    return int(result.rowcount)  # type: ignore[attr-defined]
 
 
 async def defer_outbox(
     s: AsyncSession, *, event_id: UUID, attempts: int, backoff_s: float, error: str
 ) -> int:
     """Postpone a row after a failed publication, fenced by attempts."""
-    raise NotImplementedError
+    result = await s.execute(
+        update(Outbox)
+        .where(Outbox.id == event_id, Outbox.attempts == attempts)
+        .values(
+            available_at=func.now() + func.make_interval(0, 0, 0, 0, 0, 0, backoff_s),
+            last_error=error[:100],
+        )
+    )
+    return int(result.rowcount)  # type: ignore[attr-defined]
 
 
 async def outbox_backlog(s: AsyncSession) -> tuple[int, float | None]:
