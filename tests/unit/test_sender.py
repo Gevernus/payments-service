@@ -346,8 +346,6 @@ async def test_create_http_client_policy() -> None:
         assert client.timeout.connect == 3
         assert client.timeout.read == 10
         assert client.timeout.pool == 3
-        pool = client._transport._pool  # type: ignore[attr-defined]
-        assert pool._max_keepalive_connections == 0
     finally:
         await client.aclose()
 
@@ -357,3 +355,94 @@ async def test_create_http_client_policy() -> None:
         assert custom.timeout.read == 2
     finally:
         await custom.aclose()
+
+
+async def test_create_http_client_does_not_keep_connections_alive() -> None:
+    accepted = 0
+
+    async def serve(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        nonlocal accepted
+        accepted += 1
+        try:
+            while True:
+                await reader.readuntil(b"\r\n\r\n")
+                writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                await writer.drain()
+        except (asyncio.IncompleteReadError, ConnectionError):
+            pass
+        finally:
+            writer.close()
+
+    server = await asyncio.start_server(serve, host="127.0.0.1", port=0)
+    port = server.sockets[0].getsockname()[1]
+    client = create_http_client()
+    try:
+        for _ in range(2):
+            response = await client.post(f"http://127.0.0.1:{port}/", content=b"{}")
+            assert response.status_code == 200
+        assert accepted == 2
+    finally:
+        await client.aclose()
+        server.close()
+        await server.wait_closed()
+
+
+async def test_sender_brackets_ipv6_literal_host_and_skips_sni() -> None:
+    for url, host in (
+        ("https://[2001:4860:4860::8888]/hook", "[2001:4860:4860::8888]"),
+        ("https://[2001:4860:4860::8888]:8443/hook", "[2001:4860:4860::8888]:8443"),
+    ):
+        recorder = Recorder()
+        result = await make_sender(recorder).send(make_payment(webhook_url=url))
+        assert result == Delivered()
+        (request,) = recorder.requests
+        assert lowered(request)["host"] == host
+        assert "sni_hostname" not in request.extensions
+
+
+async def test_sender_maps_any_resolution_oserror_to_dns_error() -> None:
+    for error in (
+        OSError("network unreachable"),
+        TimeoutError("resolver"),
+        socket.gaierror(-3, "x"),
+    ):
+        recorder = Recorder()
+        result = await make_sender(recorder, resolver=Resolver(error)).send(make_payment())
+        assert result == Retryable("dns_error")
+        assert recorder.requests == []
+
+
+async def test_sender_does_not_read_the_response_body() -> None:
+    release = asyncio.Event()
+
+    async def serve(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            await reader.readuntil(b"\r\n\r\n")
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 100000000\r\n\r\npartial")
+            await writer.drain()
+            await release.wait()
+        except (asyncio.IncompleteReadError, ConnectionError):
+            pass
+        finally:
+            writer.close()
+
+    server = await asyncio.start_server(serve, host="127.0.0.1", port=0)
+    port = server.sockets[0].getsockname()[1]
+    client = create_http_client()
+    sender = HttpWebhookSender(
+        client=client,
+        key=KEY,
+        internal_hosts=frozenset({"receiver"}),
+        resolver=Resolver(["127.0.0.1"]),
+        total_timeout_s=30,
+    )
+    try:
+        started = time.monotonic()
+        result = await sender.send(make_payment(webhook_url=f"http://receiver:{port}/hook"))
+        assert result == Delivered()
+        assert time.monotonic() - started < 3
+    finally:
+        release.set()
+        await client.aclose()
+        server.close()
+        await server.wait_closed()
