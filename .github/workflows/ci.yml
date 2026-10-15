@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Fail instead of skipping when testcontainers cannot start PostgreSQL or RabbitMQ.
+      REQUIRE_INFRA: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run mypy
+      # Integration tests start PostgreSQL and RabbitMQ with testcontainers on the runner's Docker.
+      - run: uv run pytest -m "not e2e"
+
+  e2e:
+    # Runs in parallel with checks: the stack build is slow and independent of lint results.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      REQUIRE_INFRA: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Start the stack (no .env file)
+        run: docker compose -f compose.yaml -f compose.e2e.yaml up -d --build --wait
+      - name: Wait for readiness
+        run: curl --fail --silent --retry 30 --retry-delay 2 --retry-connrefused http://127.0.0.1:8000/health/ready
+      - run: uv run pytest -m e2e -q
+      - name: Dump logs
+        if: failure()
+        run: docker compose -f compose.yaml -f compose.e2e.yaml logs --no-color
+      - name: Tear down
+        if: always()
+        run: docker compose -f compose.yaml -f compose.e2e.yaml down -v
