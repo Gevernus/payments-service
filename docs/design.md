@@ -623,7 +623,10 @@ pass.
   inserts an outbox event `payment.replay_requested`.
 - `python -m payments.cli replay --stuck-pending --older-than 10m [--dry-run]`: for `pending`
   payments whose `last_attempt_at` (or `created_at`) is older than the threshold and which have
-  no outbox event waiting, insert an outbox event only. No new budget is granted.
+  no outbox event waiting, insert an outbox event only. No new budget is granted. Each payment
+  gets its own transaction and nothing is locked. Choose a threshold of minutes, well above the
+  retry ladder plus `STALE_AFTER_S`: a payment still waiting in a retry queue would otherwise get
+  a duplicate message, which is harmless because the budget is fenced in the database.
 
 The DLQ is not touched: it is a journal. Malformed messages without a `payment_id` require
 manual inspection.

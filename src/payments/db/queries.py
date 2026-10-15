@@ -334,10 +334,33 @@ async def reopen(s: AsyncSession, payment_id: UUID) -> bool:
 async def find_dead(
     s: AsyncSession, *, reason: DeadReason | None, payment_id: UUID | None, limit: int
 ) -> list[UUID]:
-    """Find dead-lettered payments, optionally filtered."""
-    raise NotImplementedError
+    """Find dead-lettered payments, oldest first, optionally filtered."""
+    stmt = select(Payment.id).where(Payment.delivery_state == DeliveryState.DEAD_LETTERED)
+    if reason is not None:
+        stmt = stmt.where(Payment.dead_letter_reason == reason)
+    if payment_id is not None:
+        stmt = stmt.where(Payment.id == payment_id)
+    stmt = stmt.order_by(Payment.dead_lettered_at, Payment.id).limit(limit)
+    return list((await s.execute(stmt)).scalars())
+
+
+_STUCK = text(
+    """
+    SELECT p.id FROM payments p
+    WHERE p.delivery_state = 'pending'
+      AND COALESCE(p.last_attempt_at, p.created_at) <= now() - make_interval(secs => :older_than_s)
+      AND NOT EXISTS (SELECT 1 FROM outbox o WHERE o.payment_id = p.id)
+    ORDER BY COALESCE(p.last_attempt_at, p.created_at), p.id
+    LIMIT :limit
+    """
+).bindparams(bindparam("older_than_s", type_=Float), bindparam("limit", type_=Integer))
 
 
 async def find_stuck_pending(s: AsyncSession, *, older_than_s: float, limit: int) -> list[UUID]:
-    """Find pending payments without recent activity and without an active outbox event."""
-    raise NotImplementedError
+    """Find pending payments without recent activity and without an active outbox event.
+
+    Nothing is locked: two concurrent replays may both enqueue a payment, which is harmless
+    because every chain shares the epoch budget through the `begin_attempt` CAS.
+    """
+    rows = await s.execute(_STUCK, {"older_than_s": older_than_s, "limit": limit})
+    return [row[0] for row in rows]
