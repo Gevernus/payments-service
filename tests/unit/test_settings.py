@@ -8,7 +8,7 @@ from pydantic import SecretStr, ValidationError
 
 from tests.support.fakes import TEST_WEBHOOK_SECRET, make_settings
 
-# A consistent timeout chain: stale >= 5 + 15 + 2*5 and graceful >= 5 + 15 + 4*5 + 5.
+# A consistent timeout chain: stale = 5 + 15 + 2*5 and graceful = 5 + 15 + 4*5 + 5.
 VALID: dict[str, Any] = {
     "gateway_min_delay_s": 2,
     "gateway_max_delay_s": 5,
@@ -16,8 +16,6 @@ VALID: dict[str, Any] = {
     "db_call_timeout_s": 5,
     "rabbit_publish_timeout_s": 5,
     "outbox_lease_s": 30,
-    "stale_after_s": 30,
-    "consumer_graceful_timeout_s": 45,
     "retry_max_attempts": 3,
 }
 
@@ -29,13 +27,10 @@ VALID: dict[str, Any] = {
         pytest.param({"retry_max_attempts": 1}, id="single-attempt"),
         pytest.param({"outbox_lease_s": 10}, id="lease-equals-twice-publish-timeout"),
         pytest.param({"outbox_lease_s": 9}, id="lease-below-twice-publish-timeout"),
-        pytest.param({"stale_after_s": 29}, id="stale-below-chain"),
-        pytest.param({"consumer_graceful_timeout_s": 44}, id="graceful-below-chain"),
-        pytest.param({"webhook_total_timeout_s": 16}, id="longer-webhook-breaks-stale-chain"),
     ],
 )
 def test_settings_validators(override: dict[str, Any]) -> None:
-    assert make_settings(**VALID).stale_after_s == 30
+    make_settings(**VALID)
     with pytest.raises(ValidationError):
         make_settings(**{**VALID, **override})
 
@@ -59,15 +54,31 @@ def test_require_webhook_key_decodes_whsec() -> None:
         make_settings(**VALID, webhook_secret=None).require_webhook_key()
 
 
-def test_retry_delays_double_from_base() -> None:
-    settings = make_settings(**VALID, retry_base_delay_ms=5000)
-    assert settings.retry_delays_ms == [5000, 10000]
-    assert make_settings(**{**VALID, "retry_max_attempts": 5}).retry_delays_ms == [
-        200,
-        400,
-        800,
-        1600,
-    ]
+def test_timeout_chain_is_derived() -> None:
+    settings = make_settings(**VALID)
+    assert settings.stale_after_s == 30
+    assert settings.consumer_graceful_timeout_s == 45
+    longer = make_settings(**{**VALID, "webhook_total_timeout_s": 16, "db_call_timeout_s": 6})
+    assert longer.stale_after_s == 5 + 16 + 2 * 6
+    assert longer.consumer_graceful_timeout_s == 5 + 16 + 4 * 6 + 5
+
+
+@pytest.mark.parametrize(
+    ("base_ms", "max_attempts", "expected"),
+    [
+        (5000, 2, [5000]),
+        (5000, 3, [5000, 10000]),
+        (200, 4, [200, 400, 800]),
+        (1000, 5, [1000, 2000, 4000, 8000]),
+    ],
+)
+def test_retry_delays_double_from_base(
+    base_ms: int, max_attempts: int, expected: list[int]
+) -> None:
+    settings = make_settings(
+        **{**VALID, "retry_base_delay_ms": base_ms, "retry_max_attempts": max_attempts}
+    )
+    assert settings.retry_delays_ms == expected
 
 
 def test_internal_hosts_parse_csv() -> None:

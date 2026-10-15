@@ -56,7 +56,6 @@ def relay_settings(
         "outbox_poll_interval_s": 0.05,
         "outbox_lease_s": 30,
         "rabbit_publish_timeout_s": 2,
-        "stale_after_s": 30,
     }
     if rabbitmq_url is not None:
         values["rabbitmq_url"] = rabbitmq_url
@@ -514,7 +513,6 @@ def worker_env(config: Settings, **extra: str) -> dict[str, str]:
         "DATABASE_URL": config.database_url,
         "RABBITMQ_URL": config.rabbitmq_url,
         "OUTBOX_POLL_INTERVAL_S": "0.05",
-        "STALE_AFTER_S": "30",
         "LOG_FORMAT": "json",
     }
     env.update(extra)

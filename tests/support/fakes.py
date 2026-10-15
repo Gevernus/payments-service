@@ -107,10 +107,9 @@ def make_settings(**overrides: Any) -> Settings:
         "gateway_min_delay_s": 0,
         "gateway_max_delay_s": 0,
         "retry_base_delay_ms": 200,
-        # A timeout chain valid under design §7.5 with short deadlines (stale >= 0 + 0.5 + 2 * 1).
+        # A timeout chain valid under design §7.5 with short deadlines (stale = 0 + 0.5 + 2 * 1).
         "webhook_total_timeout_s": 0.5,
         "db_call_timeout_s": 1,
-        "stale_after_s": 3,
         "api_key": SecretStr(TEST_API_KEY),
         "webhook_secret": SecretStr(TEST_WEBHOOK_SECRET),
     }

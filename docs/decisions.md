@@ -183,7 +183,7 @@ error that looks permanent on a single statement would push the payment into the
 row recording it). Requeueing with `nack` (no delay; tight loop during an outage).
 
 **Consequences.** A database error never leads to the DLQ. Deferrals are unbounded; the
-`x-deferrals` counter makes long outages visible in logs (WARNING every 12, ERROR after 120).
+`x-deferrals` counter makes long outages visible in logs (one WARNING per deferral).
 Programming errors outside the driver still spend budget as `unexpected`.
 
 ---

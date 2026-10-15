@@ -53,11 +53,6 @@ def retry_queue(delay_ms: int) -> RabbitQueue:
     )
 
 
-def retry_delays(base_ms: int, max_attempts: int) -> list[int]:
-    """Delays of the retry ladder: base * 2**(i-1) for i in 1..max_attempts-1."""
-    return [base_ms * 2 ** (i - 1) for i in range(1, max_attempts)]
-
-
 async def _declare_bound(
     broker: RabbitBroker, queue: RabbitQueue, exchange: RabbitExchange
 ) -> None:

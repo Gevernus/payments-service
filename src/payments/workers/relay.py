@@ -14,12 +14,11 @@ from aiormq.exceptions import PublishError
 from faststream.asgi import AsgiFastStream, AsgiResponse, get
 from faststream.rabbit import Channel, RabbitBroker
 from pamqp.commands import Basic
-from sqlalchemy import text
+from sqlalchemy import Row, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from payments.config import Settings, get_settings
 from payments.db import queries
-from payments.db.queries import ClaimedEvent
 from payments.db.session import Db, create_engine, create_session_factory
 from payments.errors import NotAcked
 from payments.logging import configure_logging
@@ -77,7 +76,7 @@ class OutboxRelay:
         except Exception:  # noqa: BLE001 - a failing ping means no connection
             return False
 
-    async def _publish(self, event: ClaimedEvent) -> bool:
+    async def _publish(self, event: Row[Any]) -> bool:
         """Publish one event; True only on Basic.Ack. Failures are recorded, not raised."""
         try:
             async with asyncio.timeout(self._settings.rabbit_publish_timeout_s):
@@ -108,7 +107,7 @@ class OutboxRelay:
             return False
         return True
 
-    async def _defer(self, event: ClaimedEvent, error: str) -> None:
+    async def _defer(self, event: Row[Any], error: str) -> None:
         backoff = row_backoff(event.attempts)
         try:
             await self._db.run(
@@ -220,14 +219,8 @@ def create_app(settings: Settings | None = None) -> AsgiFastStream:
         tick = relay.last_tick
         fresh = tick is not None and time.monotonic() - tick < _HEALTH_MAX_TICK_AGE_S
         alive = bool(tasks) and not tasks[0].done()
-        connected = await relay.connected()
-        ok = connected and alive and fresh
-        body = (
-            b'{"status":"ok"}'
-            if ok
-            else b'{"status":"unhealthy","connected":%s,"loop_alive":%s,"tick_fresh":%s}'
-            % tuple(str(v).lower().encode() for v in (connected, alive, fresh))
-        )
+        ok = alive and fresh and await relay.connected()
+        body = b'{"status":"ok"}' if ok else b'{"status":"unhealthy"}'
         return AsgiResponse(body, 200 if ok else 503, headers={"content-type": "application/json"})
 
     return AsgiFastStream(

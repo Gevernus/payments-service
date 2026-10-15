@@ -514,9 +514,9 @@ Properties:
 - **A database error in the consumer never leads to the DLQ.** `db_call()` converts any driver
   or connection error (`DBAPIError`, `OSError`, `TimeoutError`, `sqlalchemy.exc.TimeoutError`)
   into `DatabaseUnavailable`. The handler defers the message, carrying the `KnownOutcome` if the
-  outcome is already known. The `x-deferrals` counter produces a WARNING every 12 deferrals and
-  an ERROR after 120. Programming errors outside the driver (`TypeError`, `KeyError`, ...)
-  inside an attempt go to `_fail("unexpected")`, spend budget and eventually mark the payment.
+  outcome is already known. Every deferral is logged at WARNING with the `x-deferrals` count.
+  Programming errors outside the driver (`TypeError`, `KeyError`, ...) inside an attempt go to
+  `_fail("unexpected")`, spend budget and eventually mark the payment.
   The `is_db_unavailable` predicate is used only by the API (503 versus 500).
 - **The gateway is called outside a transaction.** A parallel duplicate calls it with the same
   key, receives the same outcome, and only one `finalize` CAS wins (gateway contract, 8.1).
@@ -609,12 +609,11 @@ same explicit timeout.
 | Header | Type | Written by | Read by | On retry | On defer |
 |---|---|---|---|---|---|
 | `x-request-id` | str | relay (from the outbox row) | handler (logs) | kept | kept |
-| `x-known-outcome` | str: `delivered:<epoch>` or `dead:<epoch>:<reason>:<code>`, parsed with `split(":", 3)` | handler on defer | Processor | removed | set from the exception, or kept |
-| `x-deferrals` | int | handler on defer | logs (WARNING every 12, ERROR after 120) | reset | incremented |
+| `x-known-outcome` | str: the JSON of `KnownOutcome` (`kind`, `epoch`, `reason`, `code`), read and written through a pydantic `TypeAdapter` | handler on defer | Processor | removed | set from the exception, or kept |
+| `x-deferrals` | int | handler on defer | logs | reset | incremented |
 
 Never copied: `x-delivery-count`, `x-death`, `x-first-death-*`, `x-last-death-*` and any other
-header. An invalid value is logged at WARNING and ignored; the message is processed as a normal
-pass.
+header. An invalid value is ignored without a log line; the message is processed as a normal pass.
 
 ### 7.4 Replay
 
@@ -633,7 +632,8 @@ manual inspection.
 
 ### 7.5 Timeout chain
 
-A `Settings` validator enforces the conditions below.
+`Settings` derives the two rows marked "derived" from the other timeouts, so they cannot be
+misconfigured; one validator enforces the lease condition.
 
 | Parameter | Value | Condition |
 |---|---|---|
@@ -641,8 +641,8 @@ A `Settings` validator enforces the conditions below.
 | `RABBIT_PUBLISH_TIMEOUT_S` | 5 | explicit `asyncio.timeout` around each publish |
 | `GATEWAY_MAX_DELAY_S` | 5 | |
 | `WEBHOOK_TOTAL_TIMEOUT_S` | 15 | |
-| `STALE_AFTER_S` | 30 | at least `GATEWAY_MAX + WEBHOOK_TOTAL + 2 * DB_CALL` |
-| `CONSUMER_GRACEFUL_TIMEOUT_S` | 45 | at least `GATEWAY_MAX + WEBHOOK_TOTAL + 4 * DB_CALL + RABBIT_PUBLISH` |
+| `STALE_AFTER_S` (derived) | 30 | `GATEWAY_MAX + WEBHOOK_TOTAL + 2 * DB_CALL` |
+| `CONSUMER_GRACEFUL_TIMEOUT_S` (derived) | 45 | `GATEWAY_MAX + WEBHOOK_TOTAL + 4 * DB_CALL + RABBIT_PUBLISH` |
 | `copies.close()` | 5 | |
 | compose `stop_grace_period` (consumer) | 60 s | at least graceful timeout + close + 5 |
 | `OUTBOX_LEASE_S` | 30 | greater than `2 * RABBIT_PUBLISH_TIMEOUT_S` |
@@ -676,8 +676,8 @@ both the emulated gateway and the test fake.
 - Body: `{"type", "timestamp", "data": PaymentData}`. `PaymentData` has an explicit field set;
   `PaymentOut` extends it for the GET response. The request is sent with `content=body`, so the
   signed bytes are the sent bytes.
-- `verify_signature()` is exported for the receiver; a unit test checks the signature against
-  the reference `standardwebhooks` library.
+- Unit tests verify the signature with the reference `standardwebhooks` library (a dev
+  dependency); the service itself only signs.
 
 ### 8.3 Delivery
 
@@ -735,10 +735,11 @@ accessors in the processes that need them. The loaded settings (without secrets)
 | `OUTBOX_POLL_INTERVAL_S`, `OUTBOX_BATCH_SIZE`, `OUTBOX_LEASE_S` | 0.5, 100, 30 | relay |
 | `GATEWAY_MIN_DELAY_S`, `GATEWAY_MAX_DELAY_S`, `GATEWAY_SUCCESS_RATE`, `GATEWAY_OUTCOME_HINTS` | 2, 5, 0.9, false | consumer |
 | `RETRY_MAX_ATTEMPTS`, `RETRY_BASE_DELAY_MS` | 3, 5000 | consumer, cli |
-| `CONSUMER_PREFETCH`, `CONSUMER_GRACEFUL_TIMEOUT_S`, `WEBHOOK_TOTAL_TIMEOUT_S`, `STALE_AFTER_S` | 10, 45, 15, 30 | consumer |
+| `CONSUMER_PREFETCH`, `WEBHOOK_TOTAL_TIMEOUT_S` | 10, 15 | consumer |
 
-Validators: `GATEWAY_MIN_DELAY_S <= GATEWAY_MAX_DELAY_S`; `RETRY_MAX_ATTEMPTS >= 2`; the timeout
-chain of section 7.5.
+Validators: `GATEWAY_MIN_DELAY_S <= GATEWAY_MAX_DELAY_S`; `RETRY_MAX_ATTEMPTS >= 2`;
+`OUTBOX_LEASE_S > 2 * RABBIT_PUBLISH_TIMEOUT_S`. The stale threshold and the graceful timeout are
+derived from the timeouts (section 7.5), not configured.
 
 ---
 

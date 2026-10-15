@@ -1,7 +1,5 @@
 """The names, delays and arguments of the RabbitMQ topology (design §6)."""
 
-import pytest
-
 from payments.messaging.topology import (
     DEAD_LETTER_QUEUE,
     DELIVERY_LIMIT,
@@ -11,27 +9,8 @@ from payments.messaging.topology import (
     MAIN_QUEUE_NAME,
     PAYMENTS_EXCHANGE,
     RETRY_EXCHANGE,
-    retry_delays,
     retry_queue,
 )
-
-
-def test_retry_delays() -> None:
-    assert retry_delays(5000, 3) == [5000, 10000]
-
-
-@pytest.mark.parametrize(
-    ("base_ms", "max_attempts", "expected"),
-    [
-        (5000, 2, [5000]),
-        (200, 4, [200, 400, 800]),
-        (1000, 5, [1000, 2000, 4000, 8000]),
-    ],
-)
-def test_retry_delays_double_and_leave_one_attempt_without_a_retry(
-    base_ms: int, max_attempts: int, expected: list[int]
-) -> None:
-    assert retry_delays(base_ms, max_attempts) == expected
 
 
 def test_retry_queue_name_contains_delay() -> None:

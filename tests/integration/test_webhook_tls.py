@@ -14,11 +14,11 @@ from ipaddress import ip_address
 
 import httpx
 import trustme
+from standardwebhooks import Webhook
 
 from payments.webhooks.guard import IPAddress
 from payments.webhooks.sender import Delivered, HttpWebhookSender, Permanent
-from payments.webhooks.signing import verify_signature
-from tests.support.fakes import TEST_WEBHOOK_KEY, make_payment
+from tests.support.fakes import TEST_WEBHOOK_KEY, TEST_WEBHOOK_SECRET, make_payment
 
 KEY = TEST_WEBHOOK_KEY
 HOST = "merchant.test"
@@ -111,7 +111,7 @@ async def test_webhook_pinned_tls_delivery() -> None:
         assert server.seen.sni_names == [HOST]
         ((headers, body),) = server.seen.requests
     assert headers["host"] == f"{HOST}:{server.port}"
-    assert verify_signature(KEY, headers, body)
+    Webhook(TEST_WEBHOOK_SECRET).verify(body, headers)
     assert json.loads(body)["data"]["payment_id"] == str(payment.id)
 
 

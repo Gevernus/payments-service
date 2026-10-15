@@ -1,10 +1,11 @@
 """Payment state machine executed by the consumer."""
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import structlog
+from pydantic import Field
 
 from payments.db import queries as q
 from payments.db.models import Payment
@@ -30,7 +31,7 @@ class KnownOutcome:
     """A delivery outcome that is known but could not be stored yet."""
 
     kind: Literal["delivered", "dead"]
-    epoch: int
+    epoch: Annotated[int, Field(ge=0)]
     reason: DeadReason | None = None
     code: str | None = None
 

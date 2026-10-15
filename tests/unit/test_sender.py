@@ -22,7 +22,7 @@ from payments.webhooks.sender import (
     classify_status,
     create_http_client,
 )
-from payments.webhooks.signing import build_body, verify_signature, webhook_id
+from payments.webhooks.signing import build_body, sign, webhook_id
 from tests.support.fakes import TEST_WEBHOOK_KEY, TEST_WEBHOOK_SECRET, make_payment
 
 KEY = TEST_WEBHOOK_KEY
@@ -286,11 +286,8 @@ async def test_sender_signs_the_sent_bytes() -> None:
     assert headers["webhook-timestamp"] == str(now)
     assert headers["content-type"].startswith("application/json")
     assert headers["user-agent"]
-    assert verify_signature(KEY, headers, request.content, now=now)
     assert request.content == build_body(payment)
-    # Non-circular check with the reference library.
-    reference = Webhook(TEST_WEBHOOK_SECRET)
-    reference.verify(request.content, headers)
+    Webhook(TEST_WEBHOOK_SECRET).verify(request.content, headers)
 
 
 async def test_sender_signs_each_attempt_fresh_timestamp() -> None:
@@ -307,11 +304,13 @@ async def test_sender_signs_each_attempt_fresh_timestamp() -> None:
     assert first_headers["webhook-id"] == second_headers["webhook-id"]
     assert first_headers["webhook-timestamp"] != second_headers["webhook-timestamp"]
     assert first_headers["webhook-signature"] != second_headers["webhook-signature"]
-    assert verify_signature(KEY, first_headers, first.content, now=1_800_000_000)
-    assert verify_signature(KEY, second_headers, second.content, now=1_800_000_001)
-    # Each signature is bound to its own timestamp.
-    swapped = {**first_headers, "webhook-signature": second_headers["webhook-signature"]}
-    assert not verify_signature(KEY, swapped, first.content, now=1_800_000_000)
+    for timestamp, headers, request in (
+        (1_800_000_000, first_headers, first),
+        (1_800_000_001, second_headers, second),
+    ):
+        assert headers["webhook-signature"] == sign(
+            KEY, headers["webhook-id"], timestamp, request.content
+        )
 
 
 async def test_sender_sends_no_internal_headers() -> None:

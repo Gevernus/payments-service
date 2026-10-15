@@ -15,7 +15,7 @@ from tests.support.fakes import make_settings
 @pytest.fixture
 def settings(migrated_db: str) -> Settings:
     """API settings for the migrated test database (a timeout chain valid under design §7.5)."""
-    return make_settings(database_url=migrated_db, stale_after_s=30)
+    return make_settings(database_url=migrated_db)
 
 
 @pytest_asyncio.fixture

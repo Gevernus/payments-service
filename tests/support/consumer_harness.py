@@ -63,8 +63,8 @@ SPY_QUEUE = "payments.spy"
 def consumer_settings(database_url: str, rabbitmq_url: str, **overrides: Any) -> Settings:
     """Settings with fast retries and a timeout chain that satisfies design §7.5.
 
-    The webhook and database deadlines are short; `stale_after_s` and the graceful timeout are
-    derived from them unless a test sets them.
+    The webhook and database deadlines are short; the stale threshold and the graceful timeout
+    follow from them.
     """
     values: dict[str, Any] = {
         "database_url": database_url,
@@ -77,14 +77,6 @@ def consumer_settings(database_url: str, rabbitmq_url: str, **overrides: Any) ->
         "retry_base_delay_ms": BASE_DELAY_MS,
     }
     values.update(overrides)
-    gateway_max = float(values.get("gateway_max_delay_s", 0))
-    webhook = float(values["webhook_total_timeout_s"])
-    db_call = float(values["db_call_timeout_s"])
-    publish = float(values["rabbit_publish_timeout_s"])
-    values.setdefault("stale_after_s", gateway_max + webhook + 2 * db_call + 1)
-    values.setdefault(
-        "consumer_graceful_timeout_s", gateway_max + webhook + 4 * db_call + publish + 1
-    )
     return make_settings(**values)
 
 
@@ -103,9 +95,7 @@ def worker_env(settings: Settings, **extra: str) -> dict[str, str]:
         "RETRY_MAX_ATTEMPTS": str(settings.retry_max_attempts),
         "RETRY_BASE_DELAY_MS": str(settings.retry_base_delay_ms),
         "CONSUMER_PREFETCH": str(settings.consumer_prefetch),
-        "CONSUMER_GRACEFUL_TIMEOUT_S": str(settings.consumer_graceful_timeout_s),
         "WEBHOOK_TOTAL_TIMEOUT_S": str(settings.webhook_total_timeout_s),
-        "STALE_AFTER_S": str(settings.stale_after_s),
         "DB_CALL_TIMEOUT_S": str(settings.db_call_timeout_s),
         "RABBIT_PUBLISH_TIMEOUT_S": str(settings.rabbit_publish_timeout_s),
         "LOG_FORMAT": "json",

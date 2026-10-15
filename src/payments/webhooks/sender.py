@@ -81,7 +81,7 @@ class HttpWebhookSender:
         target = _safe_target(payment.webhook_url)
         try:
             async with asyncio.timeout(self._total_timeout_s):
-                return await self._post(payment)
+                return await self._post(payment, target)
         except TimeoutError:
             return Retryable("timeout")
         except BlockedTarget as exc:
@@ -92,13 +92,13 @@ class HttpWebhookSender:
             logger.warning("webhook.transport_error", target=target, error=type(exc).__name__)
             return result
 
-    async def _post(self, payment: Payment) -> SendResult:
+    async def _post(self, payment: Payment, target: str) -> SendResult:
         url = check_url(payment.webhook_url, self._internal_hosts)
         name = url.raw_host.decode("ascii").lower().rstrip(".")
         try:
             addresses = await resolve_checked(url, self._internal_hosts, self._resolver)
         except OSError:
-            logger.warning("webhook.dns_error", target=_safe_target(payment.webhook_url))
+            logger.warning("webhook.dns_error", target=target)
             return Retryable("dns_error")
         is_literal = _is_ip_literal(name)
         host_name = f"[{name}]" if ":" in name else name
@@ -127,7 +127,7 @@ class HttpWebhookSender:
             result = classify_status(response.status_code)
             logger.info(
                 "webhook.response",
-                target=_safe_target(payment.webhook_url),
+                target=target,
                 status=response.status_code,
                 retry_after=response.headers.get("retry-after"),
             )
@@ -152,11 +152,9 @@ def _safe_target(url: str) -> str:
 
 
 def _has_cert_failure(exc: BaseException | None) -> bool:
-    seen: set[int] = set()
-    while exc is not None and id(exc) not in seen:
+    while exc is not None:
         if isinstance(exc, ssl.SSLCertVerificationError):
             return True
-        seen.add(id(exc))
         exc = exc.__cause__ or exc.__context__
     return False
 

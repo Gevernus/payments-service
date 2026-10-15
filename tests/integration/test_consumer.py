@@ -19,9 +19,12 @@ import pytest_asyncio
 from sqlalchemy import text
 
 from payments.db import queries
+from payments.errors import DeadReason
+from payments.messaging.envelope import decode_known
 from payments.messaging.topology import DLQ_NAME, MAIN_QUEUE_NAME
 from payments.schemas import PaymentStatus
 from payments.services.gateway import EmulatedGateway
+from payments.services.processing import KnownOutcome
 from payments.webhooks.sender import HttpWebhookSender
 from tests.support.api import AUTH, api_client
 from tests.support.consumer_harness import (
@@ -192,7 +195,7 @@ async def test_db_down_after_delivery_persists_without_resend(env: Env, rabbit: 
             env.receiver.release_hold()  # now the receiver accepts it
             (carried, *_) = await spy.wait_for_header("x-known-outcome")
 
-            assert carried.headers["x-known-outcome"] == "delivered:0"
+            assert decode_known(carried.headers["x-known-outcome"]) == KnownOutcome("delivered", 0)
             assert (await env.row(payment_id))["delivery_state"] == "pending"
 
             proxy.set_mode("pass")
@@ -228,7 +231,9 @@ async def test_db_down_at_dead_letter_marks_later(
             await rabbit.publish(payment_id)
             (carried, *_) = await spy.wait_for_header("x-known-outcome")
 
-            assert carried.headers["x-known-outcome"] == "dead:0:permanent:http_404"
+            assert decode_known(carried.headers["x-known-outcome"]) == KnownOutcome(
+                "dead", 0, DeadReason.PERMANENT, "http_404"
+            )
             assert await rabbit.ready(DLQ_NAME) == 0  # nothing is dead-lettered unmarked
             assert (await env.row(payment_id))["delivery_state"] == "pending"
 

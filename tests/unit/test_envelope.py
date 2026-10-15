@@ -15,12 +15,16 @@ DEAD = KnownOutcome("dead", 0, DeadReason.PERMANENT, "http_404")
 
 def test_envelope_table() -> None:
     envelope = Envelope.from_headers(
-        {"x-request-id": "req-1", "x-known-outcome": "delivered:2", "x-deferrals": 3}
+        {
+            "x-request-id": "req-1",
+            "x-known-outcome": '{"kind":"delivered","epoch":2}',
+            "x-deferrals": 3,
+        }
     )
     assert envelope == Envelope(request_id="req-1", known_outcome=DELIVERED, deferrals=3)
 
     # Retry: the request id is kept, the known outcome is removed, the counter is reset.
-    retried = envelope.retried("http_503")
+    retried = envelope.retried()
     assert retried["x-request-id"] == "req-1"
     assert "x-known-outcome" not in retried
     assert retried.get("x-deferrals", 0) == 0
@@ -30,21 +34,21 @@ def test_envelope_table() -> None:
     # is incremented.
     deferred_with_new = envelope.deferred(DEAD)
     assert deferred_with_new["x-request-id"] == "req-1"
-    assert deferred_with_new["x-known-outcome"] == "dead:0:permanent:http_404"
+    assert deferred_with_new["x-known-outcome"] == encode_known(DEAD)
     assert deferred_with_new["x-deferrals"] == 4
 
     deferred_keeping = envelope.deferred(None)
     assert deferred_keeping["x-request-id"] == "req-1"
-    assert deferred_keeping["x-known-outcome"] == "delivered:2"
+    assert deferred_keeping["x-known-outcome"] == encode_known(DELIVERED)
     assert deferred_keeping["x-deferrals"] == 4
 
     # Without any input headers nothing is invented.
     empty = Envelope.from_headers({})
     assert empty == Envelope(request_id=None, known_outcome=None, deferrals=0)
     assert empty.deferred(None) == {"x-deferrals": 1}
-    assert empty.retried("timeout").get("x-deferrals", 0) == 0
-    assert "x-request-id" not in empty.retried("timeout")
-    assert empty.deferred(DELIVERED)["x-known-outcome"] == "delivered:2"
+    assert empty.retried().get("x-deferrals", 0) == 0
+    assert "x-request-id" not in empty.retried()
+    assert empty.deferred(DELIVERED)["x-known-outcome"] == encode_known(DELIVERED)
 
 
 def test_envelope_drops_broker_counters() -> None:
@@ -56,12 +60,12 @@ def test_envelope_drops_broker_counters() -> None:
         "x-first-death-reason": "rejected",
         "x-last-death-queue": "payments.new",
         "x-opt-something-else": "value",
-        "x-known-outcome": "delivered:0",
+        "x-known-outcome": encode_known(KnownOutcome("delivered", 0)),
     }
     envelope = Envelope.from_headers(headers)
 
     for produced in (
-        envelope.retried("http_503"),
+        envelope.retried(),
         envelope.deferred(None),
         envelope.deferred(DEAD),
     ):
@@ -87,14 +91,15 @@ def test_known_outcome_round_trip(known: KnownOutcome) -> None:
 
 
 def test_encode_known_format() -> None:
-    assert encode_known(DELIVERED) == "delivered:2"
-    assert encode_known(DEAD) == "dead:0:permanent:http_404"
+    assert encode_known(DELIVERED) == ('{"kind":"delivered","epoch":2,"reason":null,"code":null}')
+    assert encode_known(DEAD) == (
+        '{"kind":"dead","epoch":0,"reason":"permanent","code":"http_404"}'
+    )
 
 
 def test_decode_known_handles_colons() -> None:
-    assert decode_known("dead:0:permanent:blocked:private") == KnownOutcome(
-        "dead", 0, DeadReason.PERMANENT, "blocked:private"
-    )
+    known = KnownOutcome("dead", 0, DeadReason.PERMANENT, "blocked:private")
+    assert decode_known(encode_known(known)) == known
 
 
 @pytest.mark.parametrize(
@@ -104,28 +109,13 @@ def test_decode_known_handles_colons() -> None:
         42,
         "",
         "garbage",
-        "delivered",
-        "delivered:abc",
-        "dead:0",
-        "dead:x:permanent:http_404",
-        "dead:0:nonsense:http_404",
-        "unknown:1",
+        "delivered:2",
+        '{"kind":"delivered","epoch":-1}',
+        '{"kind":"delivered","epoch":"x"}',
+        '{"kind":"dead","epoch":0}',
+        '{"kind":"dead","epoch":0,"reason":"nonsense"}',
+        '{"kind":"unknown","epoch":1}',
     ],
 )
 def test_decode_known_invalid_ignored(value: object) -> None:
     assert decode_known(value) is None
-
-
-def test_invalid_headers_are_logged() -> None:
-    from structlog.testing import capture_logs
-
-    with capture_logs() as logs:
-        Envelope.from_headers(
-            {"x-known-outcome": "dead:bogus", "x-deferrals": "many", "x-request-id": 42}
-        )
-        Envelope.from_headers({"x-known-outcome": "delivered:1", "x-deferrals": 2})
-        Envelope.from_headers({})
-
-    warned = [entry["header"] for entry in logs if entry["event"] == "envelope.invalid_header"]
-    assert sorted(warned) == ["x-deferrals", "x-known-outcome", "x-request-id"]
-    assert all(entry["log_level"] == "warning" for entry in logs)

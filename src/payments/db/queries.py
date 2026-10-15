@@ -9,9 +9,9 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     Float,
     Integer,
+    Row,
     String,
     bindparam,
-    column,
     delete,
     func,
     select,
@@ -19,8 +19,8 @@ from sqlalchemy import (
     tuple_,
     update,
 )
-from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from payments.db.models import Outbox, Payment
@@ -36,19 +36,6 @@ class Attempt:
     payment: Payment
     attempt_no: int
     epoch: int
-
-
-@dataclass(frozen=True)
-class ClaimedEvent:
-    """An outbox row claimed by the relay."""
-
-    id: UUID
-    payment_id: UUID
-    event_type: str
-    routing_key: str
-    payload: dict[str, Any]
-    headers: dict[str, Any]
-    attempts: int
 
 
 async def insert_payment_if_absent(
@@ -107,9 +94,8 @@ async def add_outbox_event(
     await s.flush()
 
 
-_CLAIM = (
-    text(
-        """
+_CLAIM = text(
+    """
         WITH due AS MATERIALIZED (
           SELECT id FROM outbox WHERE available_at <= now()
           ORDER BY available_at LIMIT :batch FOR UPDATE SKIP LOCKED)
@@ -119,35 +105,13 @@ _CLAIM = (
         RETURNING o.id, o.payment_id, o.event_type, o.routing_key, o.payload, o.headers,
                   o.attempts
         """
-    )
-    .bindparams(bindparam("batch", type_=Integer), bindparam("lease", type_=Float))
-    .columns(
-        column("id", PG_UUID(as_uuid=True)),
-        column("payment_id", PG_UUID(as_uuid=True)),
-        column("event_type", String),
-        column("routing_key", String),
-        column("payload", JSONB),
-        column("headers", JSONB),
-        column("attempts", Integer),
-    )
-)
+).bindparams(bindparam("batch", type_=Integer), bindparam("lease", type_=Float))
 
 
-async def claim_outbox(s: AsyncSession, *, batch: int, lease_s: float) -> list[ClaimedEvent]:
-    """Lease up to `batch` due outbox rows."""
-    rows = (await s.execute(_CLAIM, {"batch": batch, "lease": lease_s})).all()
-    return [
-        ClaimedEvent(
-            id=row.id,
-            payment_id=row.payment_id,
-            event_type=row.event_type,
-            routing_key=row.routing_key,
-            payload=row.payload,
-            headers=row.headers or {},
-            attempts=row.attempts,
-        )
-        for row in rows
-    ]
+async def claim_outbox(s: AsyncSession, *, batch: int, lease_s: float) -> Sequence[Row[Any]]:
+    """Lease up to `batch` due outbox rows (id, payment_id, event_type, routing_key, payload,
+    headers, attempts)."""
+    return (await s.execute(_CLAIM, {"batch": batch, "lease": lease_s})).all()
 
 
 async def delete_published(s: AsyncSession, published: Sequence[tuple[UUID, int]]) -> int:

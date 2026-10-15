@@ -1,6 +1,5 @@
 """Payment consumer process."""
 
-import json
 from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
@@ -35,8 +34,6 @@ from payments.webhooks.sender import HttpWebhookSender, create_http_client
 
 log = structlog.get_logger(__name__)
 
-_DEFERRAL_WARNING_EVERY = 12
-_DEFERRAL_ERROR_AFTER = 120
 _PING_TIMEOUT_S = 0.2
 
 
@@ -47,26 +44,6 @@ class ConsumerDeps:
     processor: Processor
     copies: CopyPublisher
     settings: Settings
-
-
-def _log_deferral(deferrals: int, exc: Exception) -> None:
-    cause: BaseException = exc
-    while cause.__cause__ is not None:
-        cause = cause.__cause__
-    # First line of the driver message only: SQLAlchemy appends the SQL and its parameters.
-    message = str(getattr(cause, "orig", None) or cause).partition("\n")[0]
-    fields = {
-        "deferrals": deferrals,
-        "reason": type(exc).__name__,
-        "error_class": type(cause).__name__,
-        "error": message[:200],
-    }
-    if deferrals > _DEFERRAL_ERROR_AFTER:
-        log.error("consumer.deferred_too_long", **fields)
-    elif deferrals % _DEFERRAL_WARNING_EVERY == 0:
-        log.warning("consumer.deferred_repeatedly", **fields)
-    else:
-        log.info("consumer.deferred", **fields)
 
 
 async def _copy(
@@ -127,17 +104,19 @@ async def handle_payment_event(
         except (DatabaseUnavailable, AttemptInFlight) as exc:
             known = exc.known if isinstance(exc, DatabaseUnavailable) else None
             deferred = envelope.deferred(known)
-            _log_deferral(deferred["x-deferrals"], exc)
+            log.warning(
+                "consumer.deferred",
+                deferrals=deferred["x-deferrals"],
+                reason=type(exc.__cause__ or exc).__name__,
+            )
             await _copy(deps, event, deferred, body, delay_ms=delays[0], **meta)
             return
         match outcome:
             case Done():
                 return
-            case RetryLater(attempt_no=attempt_no, code=code):
+            case RetryLater(attempt_no=attempt_no):
                 index = min(max(attempt_no, 1), len(delays)) - 1
-                await _copy(
-                    deps, event, envelope.retried(code), body, delay_ms=delays[index], **meta
-                )
+                await _copy(deps, event, envelope.retried(), body, delay_ms=delays[index], **meta)
                 return
             case DeadLetter():
                 raise RejectMessage
@@ -226,16 +205,7 @@ def create_app(settings: Settings | None = None) -> AsgiFastStream:
             broker_ok = False
         copies_ok = await copies.is_connected()
         ok = consuming and broker_ok and copies_ok
-        body = json.dumps(
-            {"status": "ok"}
-            if ok
-            else {
-                "status": "unhealthy",
-                "consuming": consuming,
-                "broker": broker_ok,
-                "copies": copies_ok,
-            }
-        ).encode()
+        body = b'{"status":"ok"}' if ok else b'{"status":"unhealthy"}'
         return AsgiResponse(body, 200 if ok else 503, headers={"content-type": "application/json"})
 
     return AsgiFastStream(

@@ -47,9 +47,7 @@ class Settings(BaseSettings):
     retry_base_delay_ms: int = 5000
 
     consumer_prefetch: int = 10
-    consumer_graceful_timeout_s: float = 45
     webhook_total_timeout_s: float = 15
-    stale_after_s: float = 30
 
     @field_validator("webhook_internal_hosts", mode="before")
     @classmethod
@@ -61,28 +59,29 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _check_consistency(self) -> "Settings":
-        """Check min <= max, RETRY_MAX_ATTEMPTS >= 2 and the timeout chain (design §7.5)."""
+        """Check min <= max, RETRY_MAX_ATTEMPTS >= 2 and the outbox lease (design §7.5)."""
         if self.gateway_min_delay_s > self.gateway_max_delay_s:
             raise ValueError("GATEWAY_MIN_DELAY_S must not exceed GATEWAY_MAX_DELAY_S")
         if self.retry_max_attempts < 2:
             raise ValueError("RETRY_MAX_ATTEMPTS must be at least 2")
         if self.outbox_lease_s <= 2 * self.rabbit_publish_timeout_s:
             raise ValueError("OUTBOX_LEASE_S must exceed 2 * RABBIT_PUBLISH_TIMEOUT_S")
-        in_flight = self.gateway_max_delay_s + self.webhook_total_timeout_s
-        stale_min = in_flight + 2 * self.db_call_timeout_s
-        if self.stale_after_s < stale_min:
-            raise ValueError(
-                "STALE_AFTER_S must be at least GATEWAY_MAX_DELAY_S + WEBHOOK_TOTAL_TIMEOUT_S "
-                f"+ 2 * DB_CALL_TIMEOUT_S ({stale_min})"
-            )
-        graceful_min = in_flight + 4 * self.db_call_timeout_s + self.rabbit_publish_timeout_s
-        if self.consumer_graceful_timeout_s < graceful_min:
-            raise ValueError(
-                "CONSUMER_GRACEFUL_TIMEOUT_S must be at least GATEWAY_MAX_DELAY_S + "
-                "WEBHOOK_TOTAL_TIMEOUT_S + 4 * DB_CALL_TIMEOUT_S + RABBIT_PUBLISH_TIMEOUT_S "
-                f"({graceful_min})"
-            )
         return self
+
+    @property
+    def _in_flight_s(self) -> float:
+        """Longest time a handler spends on the gateway call and the webhook."""
+        return self.gateway_max_delay_s + self.webhook_total_timeout_s
+
+    @property
+    def stale_after_s(self) -> float:
+        """Age after which an attempt in flight is considered dead (design §7.5)."""
+        return self._in_flight_s + 2 * self.db_call_timeout_s
+
+    @property
+    def consumer_graceful_timeout_s(self) -> float:
+        """Shutdown wait for in-flight handlers, including their final writes (design §7.5)."""
+        return self._in_flight_s + 4 * self.db_call_timeout_s + self.rabbit_publish_timeout_s
 
     def require_api_key(self) -> bytes:
         """Return the API key, or raise RuntimeError if it is missing or shorter than 32 bytes."""

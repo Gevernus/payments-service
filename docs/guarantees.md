@@ -138,7 +138,7 @@ Every test name in this file is checked against the test suite by
 - Outbox rows that keep failing are only logged at ERROR after 10 attempts; nothing alerts on
   them.
 - Deferrals while the database is unavailable are unbounded; long outages are visible only in
-  logs (WARNING every 12 deferrals, ERROR after 120).
+  logs (one WARNING per deferral, with the count).
 - Compose-specific behaviour (service name resolution while a container restarts, restart after
   a process exits, `host-gateway`) is verified only by running the compose stack, not by the
   integration tests.
