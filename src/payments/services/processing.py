@@ -63,6 +63,8 @@ class Processor:
     State and event                         -> result       DB transition
     known "delivered" (no gateway/webhook)  -> Done          mark_delivered
     known "dead"                            -> DeadLetter   mark_dead, fenced by epoch
+    known "dead", already delivered or      -> Done         none (mark_dead reports the state)
+      a newer epoch
     no attempt: budget spent, stale         -> DeadLetter   mark_exhausted (max_attempts)
     no attempt: dead_lettered / delivered   -> DeadLetter / Done   none
     no attempt: another attempt in flight   -> AttemptInFlight (the handler defers)
@@ -103,7 +105,7 @@ class Processor:
             if payment.status is PaymentStatus.PENDING:
                 try:
                     status = await self._gateway.charge(
-                        idempotency_key=str(payment.id),
+                        idempotency_key=payment.idempotency_key,
                         amount=payment.amount,
                         currency=payment.currency,
                         metadata=payment.meta,

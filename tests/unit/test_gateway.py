@@ -8,7 +8,7 @@ import pytest
 
 from payments.schemas import Currency, PaymentStatus
 from payments.services.gateway import EmulatedGateway, Gateway
-from tests.support.fakes import FakeGateway, payment_id_with_outcome
+from tests.support.fakes import FakeGateway, idempotency_key_with_outcome
 
 KEYS = [f"payment-{i}" for i in range(200)]
 
@@ -67,8 +67,8 @@ async def test_gateway_distribution() -> None:
 
 
 @pytest.mark.parametrize("outcome", [PaymentStatus.SUCCEEDED, PaymentStatus.FAILED])
-async def test_payment_id_with_outcome_is_deterministic(outcome: PaymentStatus) -> None:
-    first = await payment_id_with_outcome(outcome)
+async def test_idempotency_key_with_outcome_is_deterministic(outcome: PaymentStatus) -> None:
+    first = await idempotency_key_with_outcome(outcome)
 
-    assert first == await payment_id_with_outcome(outcome)
-    assert await charge(emulated(success_rate=0.9), str(first)) is outcome
+    assert first == await idempotency_key_with_outcome(outcome)
+    assert await charge(emulated(success_rate=0.9), first) is outcome

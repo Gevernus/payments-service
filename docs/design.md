@@ -43,7 +43,7 @@ taken and the reason.
 | T9 | Amount is "decimal" | `0 < amount <= 9 999 999 999.99`, at most 2 fractional digits; as a string it must match `^\d{1,10}(\.\d{1,2})?$`. | RUB, USD and EUR all have two minor-unit digits; a JSON number is parsed as a float and only about 15 significant digits are exact. |
 | T10 | `webhook_url` | Both `http` and `https` are accepted; the address must be public (SSRF policy). In compose, `webhook-receiver` and `host.docker.internal` are allowed. | The security property is in the address, not in the scheme. |
 | T11 | Webhook format | Standard Webhooks. | An open specification with reference verification libraries. |
-| T12 | Emulation | Outcome and delay are deterministic functions of the gateway idempotency key (`payment_id`). About `GATEWAY_SUCCESS_RATE` (default 90%) of keys succeed, the rest fail; there are no per-request overrides. Tests pick a payment id with the outcome they need (`payment_id_with_outcome`). | Matches the behaviour of a real payment provider for a repeated key; makes demos and tests deterministic. |
+| T12 | Emulation | Outcome and delay are deterministic functions of the gateway idempotency key (the payment's `Idempotency-Key`). About `GATEWAY_SUCCESS_RATE` (default 90%) of keys succeed, the rest fail; there are no per-request overrides. A client, a demo or a test picks the outcome by choosing the key (tests: `idempotency_key_with_outcome`). | Matches the behaviour of a real payment provider for a repeated key; makes demos and tests deterministic. |
 | T13 | Tables `payments` and `outbox` | Exactly these two tables. | One webhook per payment, so delivery state fits in the payment row. |
 | T14 | `description` | Optional, defaults to `""`, at most 1000 characters. | |
 | T15 | DLQ | The DLQ is a journal of messages that were not processed. Reprocessing is done by a CLI over the database through the outbox: `replay dead` (dead payments, new budget) and `replay stuck --older-than T` (payments stuck in `pending`, for example after the broker's delivery limit moved a message to the DLQ). Moving a message out of the DLQ in the management UI is harmless: for a `dead_lettered` payment it is rejected to the DLQ again; for a `pending` payment processing resumes normally. | The truth about a dead payment is in the database; the DLQ cannot override it. |
@@ -154,7 +154,7 @@ CREATE TABLE payments (
   metadata             jsonb         NOT NULL DEFAULT '{}',
   status               varchar(16)   NOT NULL DEFAULT 'pending',
   idempotency_key      varchar(255)  NOT NULL,
-  request_fingerprint  varchar(72)   NOT NULL,
+  request_fingerprint  varchar(64)   NOT NULL,
   webhook_url          varchar(2048) NOT NULL,
   created_at           timestamptz   NOT NULL DEFAULT now(),
   processed_at         timestamptz,
@@ -296,14 +296,17 @@ otherwise 400.
 Request fingerprint:
 
 ```python
-canonical = json.dumps(payload.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
-fingerprint = "v1:" + sha256(canonical.encode()).hexdigest()
+fields = {"amount", "currency", "description", "metadata", "webhook_url"}
+canonical = json.dumps(payload.model_dump(mode="json", include=fields),
+                       sort_keys=True, separators=(",", ":"))
+fingerprint = sha256(canonical.encode()).hexdigest()
 ```
 
 The hash covers the validated model, so `100` and `"100.00"` in `amount` give the same
 fingerprint. Metadata is opaque client data and is hashed as parsed: `{"a": 1}` and `{"a": 1.0}`
-are different requests, and reusing a key across them is a 422. The `v1:` prefix allows the
-canonical form to change later without comparing incompatible fingerprints.
+are different requests, and reusing a key across them is a 422. The field list is explicit, so a new
+optional schema field does not change the fingerprints of existing requests. The comparison is
+a whole-string equality; there is no version dispatch.
 
 Service flow:
 
@@ -446,7 +449,7 @@ class Processor:
         try:
             if p.status is PENDING:
                 try:
-                    status = await self._gateway.charge(idempotency_key=str(p.id), amount=p.amount,
+                    status = await self._gateway.charge(idempotency_key=p.idempotency_key, amount=p.amount,
                                                         currency=p.currency, metadata=p.meta)
                 except GatewayUnavailable:
                     return await self._fail(p, "gateway_unavailable")
@@ -529,7 +532,7 @@ app = AsgiFastStream(broker, on_startup=[copies.connect, ...], after_shutdown=[c
 
 @broker.subscriber(topology.MAIN, topology.PAYMENTS, ack_policy=AckPolicy.REJECT_ON_ERROR)
 async def on_payment_event(event: PaymentEvent, msg: RabbitMessage) -> None:
-    env = Envelope.from_message(msg)          # invalid headers are logged and ignored
+    env = Envelope.from_message(msg)          # invalid headers are ignored
     bind_contextvars(payment_id=str(event.payment_id), event_id=msg.message_id)
     try:
         try:
@@ -579,7 +582,8 @@ same explicit timeout.
 | `x-deferrals` | int | handler on defer | logs | reset | incremented |
 
 Never copied: `x-delivery-count`, `x-death`, `x-first-death-*`, `x-last-death-*` and any other
-header. An invalid value is ignored without a log line; the message is processed as a normal pass.
+header. An invalid value is ignored and the message is processed as a normal pass; only an invalid
+`x-known-outcome` is logged (WARNING), because its loss would allow a second POST.
 
 ### 7.4 Replay
 
@@ -633,8 +637,9 @@ class Gateway(Protocol):
 ```
 
 `EmulatedGateway` seeds `random.Random` with `sha256(key)`, so the outcome and the delay
-(`uniform(min, max)`) are functions of the key. It logs `gateway.charge_started`. Outcome hints
-(`succeeded`, `failed`, `error`) apply only when the flag is set. A contract test runs against
+(`uniform(min, max)`) are functions of the key. The key is the payment's `Idempotency-Key`, so
+one key gives one outcome, and a demo can pick a decline deterministically through the HTTP API
+by choosing the key. The emulator logs `gateway.charge_started`. A contract test runs against
 both the emulated gateway and the test fake.
 
 ### 8.2 Webhook contract (Standard Webhooks)
@@ -777,7 +782,7 @@ The test names are listed once, next to the guarantee each one verifies, in
 - Webhook result classification, including `tls_error`.
 - `Envelope`: every cell of the header table in 7.3; `x-delivery-count` and `x-death` are never
   copied.
-- Gateway: the contract, the outcome distribution, the hints.
+- Gateway: the contract and the outcome distribution; outcomes are picked by key.
 - Processor with fakes: the budget; a known outcome is written without network calls; duplicates
   of `delivered` and `dead_lettered`; `GatewayUnavailable`; a 4xx leads to `DeadLetter`; a
   database failure after a 2xx raises `DatabaseUnavailable` carrying the `delivered` outcome.

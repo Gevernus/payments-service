@@ -81,7 +81,7 @@ class PaymentCreate(BaseModel):
     currency: Currency
     description: str = Field(default="", max_length=1000)
     metadata: dict[str, Any] = Field(default_factory=dict)
-    webhook_url: HttpUrl
+    webhook_url: HttpUrl = Field(max_length=2048)
 
     @field_validator("description")
     @classmethod

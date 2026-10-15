@@ -281,3 +281,12 @@ async def test_create_is_atomic(
     assert retry.headers["idempotent-replayed"] == "false"
     assert await count_rows(db_sessions, "payments") == 1
     assert await count_rows(db_sessions, "outbox") == 1
+
+
+async def test_overlong_webhook_url_is_rejected(client: httpx.AsyncClient) -> None:
+    url = "https://example.com/" + "a" * 2040
+
+    response = await create_payment(client, payment_body(webhook_url=url), key="long-url-1")
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "validation_error"

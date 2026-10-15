@@ -56,9 +56,9 @@ nothing.
 requests with the same key must not create two payments.
 
 **Decision.** A unique constraint on `idempotency_key` and `INSERT ... ON CONFLICT DO NOTHING
-RETURNING`. The loser reads the existing row and compares a versioned fingerprint (`v1:` plus
-SHA-256 of the canonical JSON of the validated request, so `100` and `"100.00"` agree while
-metadata is hashed as parsed). Behaviour follows
+RETURNING`. The loser reads the existing row and compares a fingerprint (the
+SHA-256 of the canonical JSON of the fields of the validated request, so `100` and `"100.00"`
+agree while metadata is hashed as parsed). Behaviour follows
 draft-ietf-httpapi-idempotency-key-header: a missing or malformed key is 400; the same key with
 a different body is 422; a matching repeat returns 202 with the original `payment_id` and
 `created_at`, the current status and `Idempotent-Replayed: true` (section 4.3).

@@ -36,10 +36,13 @@ def parse_duration(value: str) -> float:
     return float(match.group(1)) * _UNITS[match.group(2)]
 
 
-def _limit(value: str) -> int:
-    number = int(value)
+def _positive_int(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError:
+        number = 0
     if number < 1:
-        raise argparse.ArgumentTypeError("must be at least 1")
+        raise argparse.ArgumentTypeError(f"--limit must be a positive integer, got {value!r}")
     return number
 
 
@@ -61,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="minimum idle time: 30s, 15m, 2h or 0",
     )
     for sub in (dead, stuck):
-        sub.add_argument("--limit", type=_limit, default=_DEFAULT_LIMIT)
+        sub.add_argument("--limit", type=_positive_int, default=_DEFAULT_LIMIT)
         sub.add_argument("--dry-run", action="store_true", help="only list the affected payments")
     return parser
 

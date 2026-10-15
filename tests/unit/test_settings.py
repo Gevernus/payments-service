@@ -109,3 +109,9 @@ def test_loggable_masks_credentials_and_omits_secrets() -> None:
 def test_loggable_keeps_urls_without_password() -> None:
     settings = make_settings(**VALID, database_url="postgresql+asyncpg://user@db.example/payments")
     assert settings.loggable()["database_url"] == "postgresql+asyncpg://user@db.example/payments"
+
+
+def test_loggable_includes_the_derived_timeouts() -> None:
+    logged = make_settings(**VALID).loggable()
+    assert logged["stale_after_s"] == 30
+    assert logged["consumer_graceful_timeout_s"] == 45

@@ -22,7 +22,7 @@ from payments.webhooks.sender import (
     classify_status,
     create_http_client,
 )
-from payments.webhooks.signing import build_body, sign, webhook_id
+from payments.webhooks.signing import build_body, webhook_id
 from tests.support.fakes import TEST_WEBHOOK_KEY, TEST_WEBHOOK_SECRET, make_payment
 
 KEY = TEST_WEBHOOK_KEY
@@ -292,7 +292,7 @@ async def test_sender_signs_the_sent_bytes() -> None:
 
 async def test_sender_signs_each_attempt_fresh_timestamp() -> None:
     recorder = Recorder()
-    sender = make_sender(recorder, clock=counting_clock(1_800_000_000))
+    sender = make_sender(recorder, clock=counting_clock(int(time.time())))
     payment = make_payment()
 
     await sender.send(payment)
@@ -304,13 +304,9 @@ async def test_sender_signs_each_attempt_fresh_timestamp() -> None:
     assert first_headers["webhook-id"] == second_headers["webhook-id"]
     assert first_headers["webhook-timestamp"] != second_headers["webhook-timestamp"]
     assert first_headers["webhook-signature"] != second_headers["webhook-signature"]
-    for timestamp, headers, request in (
-        (1_800_000_000, first_headers, first),
-        (1_800_000_001, second_headers, second),
-    ):
-        assert headers["webhook-signature"] == sign(
-            KEY, headers["webhook-id"], timestamp, request.content
-        )
+    reference = Webhook(TEST_WEBHOOK_SECRET)  # checks the real clock, hence the real start time
+    reference.verify(first.content, first_headers)
+    reference.verify(second.content, second_headers)
 
 
 async def test_sender_sends_no_internal_headers() -> None:

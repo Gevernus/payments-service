@@ -8,7 +8,9 @@ from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import String
 
+from payments.api.routes import _IDEMPOTENCY_KEY
 from payments.db.models import Payment
 from payments.schemas import (
     Currency,
@@ -134,3 +136,23 @@ def test_payment_out_serializes_amount_as_string() -> None:
         "dead_letter_reason": None,
         "last_error": None,
     }
+
+
+def _column_length(name: str) -> int:
+    column_type = Payment.__table__.c[name].type
+    assert isinstance(column_type, String), name
+    assert column_type.length is not None, name
+    return column_type.length
+
+
+def test_length_limits_match_column_lengths() -> None:
+    fields = PaymentCreate.model_fields
+
+    for name in ("webhook_url", "description"):
+        (limit,) = [m.max_length for m in fields[name].metadata if hasattr(m, "max_length")]
+        assert limit == _column_length(name), name
+    assert max(len(currency.value) for currency in Currency) <= _column_length("currency")
+    # The Idempotency-Key header is validated by the route, against its column.
+    limit = _column_length("idempotency_key")
+    assert _IDEMPOTENCY_KEY.fullmatch("k" * limit)
+    assert not _IDEMPOTENCY_KEY.fullmatch("k" * (limit + 1))

@@ -1,4 +1,4 @@
-"""Replay: the CLI reopens dead payments and recovers stuck ones through the outbox (design §7.4)."""
+"""Replay: the CLI reopens dead payments and recovers stuck ones via the outbox (design §7.4)."""
 
 from payments.db.session import Db
 from payments.services.replay import replay_dead, replay_stuck_pending
@@ -92,6 +92,10 @@ async def test_replay_dry_run_changes_nothing(env: Env) -> None:
     assert code == 0, output
     code, output = await run_cli(settings, "replay", "dead", "--limit", "0")
     assert code == 2, output  # a usage error, before any database access
+    assert "--limit must be a positive integer" in output
+    code, output = await run_cli(settings, "replay", "dead", "--limit", "abc")
+    assert code == 2, output
+    assert "--limit must be a positive integer, got 'abc'" in output
     code, output = await run_cli(settings, "replay", "stuck", "--older-than", "0", "--dry-run")
     assert code == 0, output
 

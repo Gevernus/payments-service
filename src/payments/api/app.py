@@ -90,7 +90,14 @@ async def _http_error(_request: Request, error: Exception) -> JSONResponse:
 
 
 async def _database_unavailable(_request: Request, error: Exception) -> JSONResponse:
-    log.warning("db.unavailable", exc_info=error)
+    root: BaseException = error
+    while root.__cause__ is not None:
+        root = root.__cause__
+    log.error(
+        "db.unavailable",
+        error_class=type(root).__name__,
+        error=str(getattr(root, "orig", None) or root).partition("\n")[0][:200],
+    )
     return problem_response(
         503,
         code="database_unavailable",

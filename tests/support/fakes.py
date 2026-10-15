@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
-from uuid import NAMESPACE_OID, UUID, uuid4, uuid5
+from uuid import UUID, uuid4
 
 from pydantic import SecretStr
 
@@ -27,10 +27,10 @@ TEST_WEBHOOK_SECRET = "whsec_" + base64.b64encode(TEST_WEBHOOK_KEY).decode()
 _EMULATED_CHARGE = EmulatedGateway.charge
 
 
-async def payment_id_with_outcome(
+async def idempotency_key_with_outcome(
     outcome: PaymentStatus, *, nth: int = 0, success_rate: float = 0.9
-) -> UUID:
-    """The `nth` id of a fixed sequence that the emulated gateway answers with `outcome`."""
+) -> str:
+    """The `nth` key of a fixed sequence that the emulated gateway answers with `outcome`."""
 
     async def no_sleep(_: float) -> None:
         return None
@@ -39,10 +39,10 @@ async def payment_id_with_outcome(
         success_rate=success_rate, min_delay_s=0, max_delay_s=0, sleep=no_sleep
     )
     for i in range(10_000):
-        candidate = uuid5(NAMESPACE_OID, f"{outcome.value}-{i}")
+        candidate = f"{outcome.value}-{i}"
         status = await _EMULATED_CHARGE(
             gateway,
-            idempotency_key=str(candidate),
+            idempotency_key=candidate,
             amount=Decimal(1),
             currency=Currency.RUB,
             metadata={},
@@ -51,7 +51,7 @@ async def payment_id_with_outcome(
             if nth == 0:
                 return candidate
             nth -= 1
-    raise RuntimeError(f"no payment id with outcome {outcome.value}")
+    raise RuntimeError(f"no idempotency key with outcome {outcome.value}")
 
 
 @dataclass(frozen=True)

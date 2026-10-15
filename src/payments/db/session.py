@@ -24,6 +24,7 @@ def create_engine(settings: Settings, *, role: str) -> AsyncEngine:
     return create_async_engine(
         settings.database_url,
         pool_pre_ping=True,
+        hide_parameters=True,  # tracebacks must not carry request bodies
         connect_args={
             "timeout": 3,
             "command_timeout": 5,

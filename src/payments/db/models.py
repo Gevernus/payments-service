@@ -48,7 +48,7 @@ class Payment(Base):
         server_default=PaymentStatus.PENDING.value,
     )
     idempotency_key: Mapped[str] = mapped_column(String(255))
-    request_fingerprint: Mapped[str] = mapped_column(String(72))
+    request_fingerprint: Mapped[str] = mapped_column(String(64))
     webhook_url: Mapped[str] = mapped_column(String(2048))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")

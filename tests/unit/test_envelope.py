@@ -89,6 +89,17 @@ def test_decode_known_handles_colons() -> None:
     assert decode_known(encode_known(known)) == known
 
 
+def test_invalid_known_outcome_is_logged_and_other_headers_are_not() -> None:
+    from structlog.testing import capture_logs
+
+    with capture_logs() as logs:
+        Envelope.from_headers({"x-known-outcome": "garbage", "x-deferrals": "many"})
+        Envelope.from_headers({"x-known-outcome": encode_known(DELIVERED)})
+        Envelope.from_headers({})
+
+    assert [entry["event"] for entry in logs] == ["envelope.invalid_known_outcome"]
+
+
 @pytest.mark.parametrize(
     "value",
     [

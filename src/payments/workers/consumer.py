@@ -18,7 +18,7 @@ from payments.db.session import Db, create_engine, create_session_factory
 from payments.errors import AttemptInFlight, CopyUnroutable, DatabaseUnavailable
 from payments.logging import configure_logging
 from payments.messaging.copies import CopyPublisher
-from payments.messaging.envelope import Envelope
+from payments.messaging.envelope import DEFERRALS, KNOWN_OUTCOME, Envelope
 from payments.messaging.topology import (
     MAIN_QUEUE,
     PAYMENTS_EXCHANGE,
@@ -69,7 +69,7 @@ async def _copy(
         )
     except CopyUnroutable:  # the topology is broken
         log.error("consumer.copy_unroutable", delay_ms=delay_ms)
-        if "x-known-outcome" not in headers:
+        if KNOWN_OUTCOME not in headers:
             with suppress(DatabaseUnavailable):
                 await deps.processor.mark_unroutable(event.payment_id)
         raise RejectMessage from None
@@ -103,10 +103,13 @@ async def handle_payment_event(
         except (DatabaseUnavailable, AttemptInFlight) as exc:
             known = exc.known if isinstance(exc, DatabaseUnavailable) else None
             deferred = envelope.deferred(known)
+            root: BaseException = exc
+            while root.__cause__ is not None:
+                root = root.__cause__
             log.warning(
                 "consumer.deferred",
-                deferrals=deferred["x-deferrals"],
-                reason=type(exc.__cause__ or exc).__name__,
+                deferrals=deferred[DEFERRALS],
+                reason=type(root).__name__,
             )
             await _copy(deps, event, deferred, body, delay_ms=delays[0], **meta)
             return

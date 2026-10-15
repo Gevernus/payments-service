@@ -1,9 +1,11 @@
 """Message headers that are carried between deliveries (design §7.3)."""
 
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
+import structlog
 from pydantic import TypeAdapter, ValidationError
 
 from payments.services.processing import KnownOutcome
@@ -11,16 +13,9 @@ from payments.services.processing import KnownOutcome
 KNOWN_OUTCOME = "x-known-outcome"
 DEFERRALS = "x-deferrals"
 
+log = structlog.get_logger(__name__)
+
 _KNOWN = TypeAdapter(KnownOutcome)
-
-
-def _text(value: object) -> str | None:
-    if isinstance(value, bytes):
-        try:
-            return value.decode()
-        except UnicodeDecodeError:
-            return None
-    return value if isinstance(value, str) else None
 
 
 def _count(value: object) -> int:
@@ -38,7 +33,7 @@ class Envelope:
     def from_headers(cls, headers: Mapping[str, Any]) -> "Envelope":
         """Read the whitelisted headers; invalid values are ignored."""
         return cls(
-            known_outcome=decode_known(_text(headers.get(KNOWN_OUTCOME))),
+            known_outcome=decode_known(headers.get(KNOWN_OUTCOME)),
             deferrals=_count(headers.get(DEFERRALS)),
         )
 
@@ -62,11 +57,17 @@ def encode_known(known: KnownOutcome) -> str:
 
 
 def decode_known(value: object) -> KnownOutcome | None:
-    """Decode a header value; None if invalid."""
-    if not isinstance(value, str):
+    """Decode a header value; None if absent or invalid.
+
+    A present but invalid value is logged: it carries "the 2xx was received, do not resend".
+    """
+    if value is None:
         return None
-    try:
-        known = _KNOWN.validate_json(value)
-    except ValidationError:
+    known = None
+    if isinstance(value, str | bytes):
+        with suppress(ValidationError):
+            known = _KNOWN.validate_json(value)
+    if known is None or (known.kind == "dead" and known.reason is None):
+        log.warning("envelope.invalid_known_outcome", value=repr(value)[:100])
         return None
-    return None if known.kind == "dead" and known.reason is None else known
+    return known

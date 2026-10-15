@@ -36,11 +36,10 @@ def test_fingerprint_stable_under_key_order() -> None:
     )
 
 
-def test_fingerprint_has_version_prefix_and_sha256_digest() -> None:
+def test_fingerprint_is_a_sha256_hex_digest() -> None:
     value = fingerprint(make())
-    assert value.startswith("v1:")
-    assert len(value) == len("v1:") + 64
-    int(value.removeprefix("v1:"), 16)
+    assert len(value) == 64
+    int(value, 16)
 
 
 def test_fingerprint_amount_forms_equal() -> None:
@@ -70,7 +69,7 @@ def test_fingerprint_differs_when_any_field_differs() -> None:
 
 
 def test_fingerprint_golden() -> None:
-    """Pins the canonical form: any change to it must introduce a new version prefix.
+    """Pins the canonical form: any change to it invalidates the fingerprints of stored payments.
 
     Reference input: amount "100.50", RUB, description "Order 42", metadata
     {"b": [1, 2.5, null, true], "a": {"k": "v"}}, webhook_url https://example.com/hook.
@@ -84,6 +83,5 @@ def test_fingerprint_golden() -> None:
         metadata={"b": [1, 2.5, None, True], "a": {"k": "v"}},
     )
     assert (
-        fingerprint(payload)
-        == "v1:fa3fb4f62eea7b283057cff9ff67fc1c5f68fc53f215526e577ce492a1e54180"
+        fingerprint(payload) == "fa3fb4f62eea7b283057cff9ff67fc1c5f68fc53f215526e577ce492a1e54180"
     )

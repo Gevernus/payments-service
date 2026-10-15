@@ -110,6 +110,8 @@ class Settings(BaseSettings):
         values["database_url"] = mask_url_password(self.database_url)
         values["rabbitmq_url"] = mask_url_password(self.rabbitmq_url)
         values["webhook_internal_hosts"] = sorted(self.webhook_internal_hosts)
+        values["stale_after_s"] = self.stale_after_s
+        values["consumer_graceful_timeout_s"] = self.consumer_graceful_timeout_s
         values["api_key_set"] = self.api_key is not None
         values["webhook_secret_set"] = self.webhook_secret is not None
         return values

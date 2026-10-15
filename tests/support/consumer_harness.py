@@ -18,7 +18,8 @@ RabbitMQ
   to `payments.new`, including copies that return from retry queues; waits on counts and headers
 
 Running the system
-- Env (fixture `env`): payments for a webhook receiver path, row and POST lookups, state waits
+- Env (fixture `env`): payments for a webhook receiver path (the idempotency key picks the
+  emulated gateway outcome), row and POST lookups, state waits
 - running_consumer: the real consumer application in-process
 - running_handler: the same handler on real collaborators, with the copy publisher on its own URL
 - relay_runner, publish_outbox: a relay that carries outbox rows to the broker
@@ -65,7 +66,7 @@ from payments.webhooks.guard import system_resolver
 from payments.webhooks.sender import HttpWebhookSender, create_http_client
 from payments.workers.consumer import ConsumerDeps, create_app, handle_payment_event
 from payments.workers.relay import OutboxRelay
-from tests.support.fakes import make_settings, payment_id_with_outcome
+from tests.support.fakes import idempotency_key_with_outcome, make_settings
 from tests.support.receiver import Delivery, Receiver
 from tests.support.tcp_proxy import TcpProxy
 from tests.support.wait import wait_until
@@ -192,8 +193,12 @@ async def insert_payment(
     last_error: str | None = None,
     age_s: float = 0,
     payment_id: uuid.UUID | None = None,
+    idempotency_key: str | None = None,
 ) -> uuid.UUID:
-    """Insert a payment row in any consistent state, without an outbox row."""
+    """Insert a payment row in any consistent state, without an outbox row.
+
+    The idempotency key, which seeds the emulated gateway, defaults to the payment id.
+    """
     payment_id = payment_id or uuid.uuid4()
     async with sessions.begin() as session:
         await session.execute(
@@ -202,7 +207,7 @@ async def insert_payment(
                 "id": payment_id,
                 "meta": json.dumps(dict(metadata or {})),
                 "status": status,
-                "key": f"consumer-{payment_id}",
+                "key": idempotency_key or str(payment_id),
                 "url": webhook_url,
                 "age": age_s,
                 "processed": status != "pending",
@@ -514,14 +519,15 @@ class Env:
     ) -> uuid.UUID:
         """Insert a pending payment whose webhook goes to a receiver path.
 
-        The emulated gateway is a function of the payment id, so the id is picked to give `outcome`.
+        The emulated gateway is a function of the idempotency key, so the key is picked to give
+        `outcome`.
         """
         nth = self.extra[outcome] = self.extra.get(outcome, -1) + 1
-        payment_id = columns.pop("payment_id", None) or await payment_id_with_outcome(
-            outcome, nth=nth
+        key = columns.pop("idempotency_key", None) or await idempotency_key_with_outcome(
+            outcome, nth=nth, success_rate=self.settings().gateway_success_rate
         )
         return await insert_payment(
-            self.sessions, webhook_url=self.hook(path), payment_id=payment_id, **columns
+            self.sessions, webhook_url=self.hook(path), idempotency_key=key, **columns
         )
 
     async def row(self, payment_id: uuid.UUID) -> Row:

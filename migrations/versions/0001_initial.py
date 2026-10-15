@@ -25,7 +25,7 @@ def upgrade() -> None:
           metadata             jsonb         NOT NULL DEFAULT '{}',
           status               varchar(16)   NOT NULL DEFAULT 'pending',
           idempotency_key      varchar(255)  NOT NULL,
-          request_fingerprint  varchar(72)   NOT NULL,
+          request_fingerprint  varchar(64)   NOT NULL,
           webhook_url          varchar(2048) NOT NULL,
           created_at           timestamptz   NOT NULL DEFAULT now(),
           processed_at         timestamptz,

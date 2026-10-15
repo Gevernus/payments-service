@@ -1,9 +1,10 @@
 """The consumer runs the payment state machine under retries, duplicates and failures.
 
 Runs the real consumer application against PostgreSQL, RabbitMQ and an in-process webhook
-receiver (design §6, §7; failure matrix in docs/guarantees.md). Webhook outcomes come from receiver paths, gateway outcomes from
-the emulator's hints. Faults are injected with TCP proxies in front of PostgreSQL or RabbitMQ,
-and by replacing a single `queries` function or collaborator method in the consumer's process.
+receiver (design §6, §7; failure matrix in docs/guarantees.md). Webhook outcomes come from
+receiver paths, gateway outcomes from the idempotency key, which seeds the emulator. Faults are
+injected with TCP proxies in front of PostgreSQL or RabbitMQ, and by replacing a single `queries`
+function or collaborator method in the consumer's process.
 """
 
 import asyncio
@@ -513,7 +514,7 @@ async def test_redelivery_after_finalize_does_not_recall_gateway(
     finally:
         proxy.close()
 
-    assert charges == [str(payment_id)]  # the gateway was called once
+    assert charges == [row["idempotency_key"]]  # the gateway was called once
     assert len(env.posts(payment_id)) == 1
     assert row["status"] == "succeeded"
     assert row["attempts"] == 2
