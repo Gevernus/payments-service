@@ -5,18 +5,21 @@ import base64
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from uuid import UUID, uuid4
 
 from pydantic import SecretStr
 
 from payments.config import Settings
 from payments.db.models import Payment
-from payments.schemas import Currency, PaymentStatus
+from payments.schemas import Currency, DeliveryState, PaymentStatus
 from payments.webhooks.sender import Delivered, SendResult
 
 TEST_API_KEY = "test-api-key-0123456789abcdef0123456789"
-TEST_WEBHOOK_SECRET = "whsec_" + base64.b64encode(b"0123456789abcdef0123456789abcdef").decode()
+TEST_WEBHOOK_KEY = b"0123456789abcdef0123456789abcdef"
+TEST_WEBHOOK_SECRET = "whsec_" + base64.b64encode(TEST_WEBHOOK_KEY).decode()
 
 
 @dataclass(frozen=True)
@@ -110,3 +113,29 @@ def make_settings(**overrides: Any) -> Settings:
     }
     values.update(overrides)
     return Settings(**values)
+
+
+def make_payment(
+    *,
+    webhook_url: str = "https://merchant.example/hooks/payments",
+    status: PaymentStatus = PaymentStatus.SUCCEEDED,
+    payment_id: UUID | None = None,
+) -> Payment:
+    """A processed payment (not persisted) for webhook tests."""
+    created = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+    return Payment(
+        id=payment_id or uuid4(),
+        amount=Decimal("100.00"),
+        currency=Currency.RUB,
+        description="order 42",
+        meta={"order_id": 42},
+        status=status,
+        idempotency_key="key-1",
+        request_fingerprint="v1:abc",
+        webhook_url=webhook_url,
+        created_at=created,
+        processed_at=created + timedelta(seconds=3),
+        delivery_state=DeliveryState.PENDING,
+        attempts=1,
+        attempts_base=0,
+    )
