@@ -1,0 +1,143 @@
+# Works without a .env file: every value has a development default. The API key, the webhook
+# secret and the passwords below are for local use only.
+
+x-app: &app
+  image: payments-service:local
+  pull_policy: never
+  # uvicorn re-raises SIGTERM after a clean shutdown, so exit code 143 is the graceful path.
+  init: true
+  restart: unless-stopped
+  environment:
+    DATABASE_URL: postgresql+asyncpg://payments:${POSTGRES_PASSWORD:-payments}@postgres:5432/payments
+    RABBITMQ_URL: amqp://payments:${RABBITMQ_PASSWORD:-payments}@rabbitmq:5672/?heartbeat=10
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    LOG_FORMAT: json
+    API_KEY: ${API_KEY:-dev-only-api-key-not-for-production-use-0000}
+    WEBHOOK_SECRET: ${WEBHOOK_SECRET:-whsec_ZGV2LW9ubHktd2ViaG9vay1zaWduaW5nLWtleS0wMTI=}
+    WEBHOOK_INTERNAL_HOSTS: ${WEBHOOK_INTERNAL_HOSTS:-webhook-receiver,host.docker.internal}
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    rabbitmq:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: payments
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-payments}
+      POSTGRES_DB: payments
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U payments -d payments"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  rabbitmq:
+    image: rabbitmq:4.1.8-management-alpine
+    # Quorum queue data is tied to the node name, which derives from the hostname.
+    hostname: rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: payments
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-payments}
+    ports:
+      - "127.0.0.1:${RABBITMQ_UI_PORT:-15672}:15672"
+    volumes:
+      - rabbitmqdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 15s
+
+  migrate:
+    <<: *app
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # api builds the image that every application service runs.
+  api:
+    <<: *app
+    build: .
+    pull_policy: build
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  relay:
+    <<: *app
+    command: ["uvicorn", "payments.workers.relay:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    # Shutdown waits up to 2 * RABBIT_PUBLISH_TIMEOUT_S + 5 = 15 s for the loop tasks; the
+    # default 10 s would end in SIGKILL while the broker stalls.
+    stop_grace_period: 30s
+    healthcheck: &worker-health
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  consumer:
+    <<: *app
+    command: ["uvicorn", "payments.workers.consumer:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    # Graceful timeout (45 s with the default timeouts) + copies.close() (5 s) + 5 s margin.
+    # With the default timeouts, `docker compose stop` ends the process before SIGKILL.
+    stop_grace_period: 60s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck: *worker-health
+
+  webhook-receiver:
+    # Demo and end-to-end receiver; runs on the application image and verifies signatures with
+    # the standard library only.
+    image: payments-service:local
+    pull_policy: never
+    init: true
+    restart: unless-stopped
+    command: ["uvicorn", "--app-dir", "tools", "webhook_receiver:app", "--host", "0.0.0.0", "--port", "9000"]
+    environment:
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-whsec_ZGV2LW9ubHktd2ViaG9vay1zaWduaW5nLWtleS0wMTI=}
+    volumes:
+      - ./tools:/app/tools:ro
+    ports:
+      - "127.0.0.1:${RECEIVER_PORT:-9000}:9000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request as u; u.urlopen('http://127.0.0.1:9000/health', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 3s
+
+volumes:
+  pgdata:
+  rabbitmqdata:

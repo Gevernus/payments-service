@@ -1,0 +1,19 @@
+# Override for the end-to-end suite:
+#   docker compose -f compose.yaml -f compose.e2e.yaml up -d --build --wait
+# Short gateway delays and a short retry ladder (0.2 s, 0.4 s) keep the suite fast. The shorter
+# webhook budget shortens the derived consumer shutdown time, so the 60 s grace period of
+# compose.yaml still covers it.
+
+x-fast: &fast
+  GATEWAY_MIN_DELAY_S: "0.05"
+  GATEWAY_MAX_DELAY_S: "0.2"
+  RETRY_BASE_DELAY_MS: "200"
+  WEBHOOK_TOTAL_TIMEOUT_S: "5"
+  # The SSRF scenario needs a host outside this list; the receiver stays reachable.
+  WEBHOOK_INTERNAL_HOSTS: webhook-receiver
+
+services:
+  consumer:
+    environment: *fast
+  api:
+    environment: *fast

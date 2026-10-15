@@ -380,7 +380,7 @@ Event payload: `{"event_id", "payment_id", "occurred_at"}`. `event_type` is `pay
 
 ## 6. RabbitMQ topology
 
-Image `rabbitmq:4.1.<patch>-management-alpine`; FastStream `>=0.7,<0.8`. The only
+Image `rabbitmq:4.1.8-management-alpine`; FastStream `>=0.7,<0.8`. The only
 acknowledgements used are `basic.ack` and `basic.reject(requeue=false)`; `nack` and
 `reject(requeue=true)` are not used.
 
@@ -619,6 +619,7 @@ misconfigured; one validator enforces the lease condition.
 | `STALE_AFTER_S` (derived) | 30 | `GATEWAY_MAX + WEBHOOK_TOTAL + 2 * DB_CALL` |
 | `CONSUMER_GRACEFUL_TIMEOUT_S` (derived) | 45 | `GATEWAY_MAX + WEBHOOK_TOTAL + 4 * DB_CALL + RABBIT_PUBLISH` |
 | `copies.close()` | 5 | |
+| compose `stop_grace_period` (relay) | 30 s | at least `2 * RABBIT_PUBLISH_TIMEOUT_S + 5` (15 s) of loop shutdown, with margin |
 | compose `stop_grace_period` (consumer) | 60 s | at least graceful timeout + close + 5 |
 | `OUTBOX_LEASE_S` | 30 | greater than `2 * RABBIT_PUBLISH_TIMEOUT_S` |
 
@@ -736,17 +737,27 @@ Events: `payment.created`, `payment.replayed`, `payment.idempotency_conflict`,
 
 ## 11. Docker and compose
 
-- Image: `python:3.13-slim`, dependencies installed with `uv sync --locked`, non-root user,
-  `PYTHONUNBUFFERED=1`.
+- Image: `python:3.13-slim`, dependencies installed with `uv sync --frozen --no-dev` in a build stage, non-root user,
+  `PYTHONUNBUFFERED=1`. The final image holds the virtualenv, `src`, `migrations` and
+  `alembic.ini`.
 - `compose.yaml` works without a `.env` file: no `${VAR:?}` and valid development defaults.
-  Services: `postgres:17-alpine`; `rabbitmq:4.1.<patch>-management-alpine` with
+  Services: `postgres:17-alpine`; `rabbitmq:4.1.8-management-alpine` with
   `hostname: rabbitmq` (the quorum queue data is tied to the node name); `migrate`, then `api`,
   `relay`, `consumer` (`stop_grace_period: 60s`, `extra_hosts`) and `webhook-receiver`.
   Application services use `init: true`, `restart: unless-stopped`, and `LOG_FORMAT=json`.
-- `compose.e2e.yaml` overrides gateway delays to 0.05 to 0.2 s and `RETRY_BASE_DELAY_MS=200`.
+- `compose.e2e.yaml` overrides gateway delays to 0.05 to 0.2 s, `RETRY_BASE_DELAY_MS=200`,
+  `WEBHOOK_TOTAL_TIMEOUT_S=5` and `WEBHOOK_INTERNAL_HOSTS=webhook-receiver` (so `host.docker.internal`
+  is blocked and the SSRF scenario can use it).
 - The webhook receiver exposes `/hooks/ok`, `/hooks/fail/{n}` (fails the first `n` requests per
-  payment), `/hooks/status/{code}`, verifies signatures, and lists received webhooks at
-  `GET /received?payment_id=`.
+  `webhook-id`), `/hooks/status/{code}`, `/hooks/slow/{seconds}` (200 after a delay),
+  verifies signatures, and lists received webhooks at
+  `GET /received?payment_id=`. It runs on the application image with `tools/` mounted read-only
+  and checks signatures with `hmac` from the standard library, so it needs no extra dependency.
+- The first run is `docker compose up -d --build`: only `api` builds the shared image, so
+  starting a single service before the image exists fails with "No such image". Separate
+  builds of one tag in parallel collide, hence one builder.
+- Every long-running service has a healthcheck (a Python one-liner, since the image has no curl),
+  and `docker compose up -d --wait` needs no `.env`; `.env.example` lists the optional overrides.
 - Behaviour that can only be observed with Docker (service name resolution while a container
   restarts, `restart` after a process exits, `host-gateway`) is checked by the first compose run
   before the end-to-end suite.
