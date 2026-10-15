@@ -191,46 +191,144 @@ async def outbox_backlog(s: AsyncSession) -> tuple[int, float | None]:
 
 async def begin_attempt(s: AsyncSession, payment_id: UUID, max_attempts: int) -> Attempt | None:
     """Start an attempt if the budget allows it."""
-    raise NotImplementedError
+    attempt_no = (Payment.attempts - Payment.attempts_base).label("attempt_no")
+    row = (
+        await s.execute(
+            update(Payment)
+            .where(
+                Payment.id == payment_id,
+                Payment.delivery_state == DeliveryState.PENDING,
+                Payment.attempts - Payment.attempts_base < max_attempts,
+            )
+            .values(attempts=Payment.attempts + 1, last_attempt_at=func.now())
+            .returning(Payment, attempt_no, Payment.attempts_base.label("epoch"))
+            .execution_options(synchronize_session=False)
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    return Attempt(payment=row[0], attempt_no=row.attempt_no, epoch=row.epoch)
+
+
+_EXHAUSTED = text(
+    """
+    UPDATE payments SET delivery_state = 'dead_lettered', dead_lettered_at = now(),
+                        dead_letter_reason = 'max_attempts',
+                        last_error = COALESCE(last_error, 'crash_loop')
+    WHERE id = :id AND delivery_state = 'pending'
+      AND attempts - attempts_base >= :max
+      AND last_attempt_at < now() - make_interval(secs => :stale)
+    RETURNING id
+    """
+).bindparams(
+    bindparam("id", type_=PG_UUID(as_uuid=True)),
+    bindparam("max", type_=Integer),
+    bindparam("stale", type_=Float),
+)
 
 
 async def mark_exhausted(
     s: AsyncSession, payment_id: UUID, max_attempts: int, stale_s: float
 ) -> bool:
     """Dead-letter a payment whose budget is spent and whose last attempt is stale."""
-    raise NotImplementedError
+    result = await s.execute(_EXHAUSTED, {"id": payment_id, "max": max_attempts, "stale": stale_s})
+    return result.first() is not None
 
 
 async def get_delivery_state(s: AsyncSession, payment_id: UUID) -> DeliveryState | None:
     """Return the delivery state, or None if the payment does not exist."""
-    raise NotImplementedError
+    return (
+        await s.execute(select(Payment.delivery_state).where(Payment.id == payment_id))
+    ).scalar_one_or_none()
 
 
 async def finalize(s: AsyncSession, payment_id: UUID, status: PaymentStatus) -> Payment | None:
     """Set the final status of a pending payment."""
-    raise NotImplementedError
+    return (
+        await s.execute(
+            update(Payment)
+            .where(Payment.id == payment_id, Payment.status == PaymentStatus.PENDING)
+            .values(status=status, processed_at=func.now())
+            .returning(Payment)
+            .execution_options(synchronize_session=False)
+        )
+    ).scalar_one_or_none()
+
+
+_DELIVERED = text(
+    """
+    UPDATE payments SET delivery_state = 'delivered', delivered_at = now(),
+                        dead_lettered_at = NULL, dead_letter_reason = NULL, last_error = NULL
+    WHERE id = :id AND delivery_state IN ('pending', 'dead_lettered')
+    """
+).bindparams(bindparam("id", type_=PG_UUID(as_uuid=True)))
 
 
 async def mark_delivered(s: AsyncSession, payment_id: UUID) -> None:
     """Mark the webhook as delivered (delivered wins over dead-lettered)."""
-    raise NotImplementedError
+    await s.execute(_DELIVERED, {"id": payment_id})
+
+
+_DEAD = text(
+    """
+    UPDATE payments SET delivery_state = 'dead_lettered', dead_lettered_at = now(),
+                        dead_letter_reason = :reason, last_error = COALESCE(:code, last_error)
+    WHERE id = :id AND delivery_state = 'pending' AND attempts_base = :epoch
+    RETURNING delivery_state
+    """
+).bindparams(
+    bindparam("id", type_=PG_UUID(as_uuid=True)),
+    bindparam("reason", type_=String),
+    bindparam("code", type_=String),
+    bindparam("epoch", type_=Integer),
+)
 
 
 async def mark_dead(
     s: AsyncSession, payment_id: UUID, *, epoch: int, reason: DeadReason, code: str | None
 ) -> DeliveryState | None:
     """Dead-letter the payment, fenced by epoch; returns the resulting delivery state."""
-    raise NotImplementedError
+    updated = (
+        await s.execute(
+            _DEAD, {"id": payment_id, "reason": reason.value, "code": code, "epoch": epoch}
+        )
+    ).scalar_one_or_none()
+    if updated is not None:
+        return DeliveryState(updated)
+    # Not ours: report the actual state (delivered, a newer epoch, already dead, or missing).
+    return await get_delivery_state(s, payment_id)
+
+
+_RECORD_ERROR = text(
+    """
+    UPDATE payments SET last_error = :code
+    WHERE id = :id AND delivery_state = 'pending' AND attempts_base = :epoch
+    """
+).bindparams(
+    bindparam("id", type_=PG_UUID(as_uuid=True)),
+    bindparam("code", type_=String),
+    bindparam("epoch", type_=Integer),
+)
 
 
 async def record_error(s: AsyncSession, payment_id: UUID, *, epoch: int, code: str) -> None:
-    """Record the last error code, fenced by epoch."""
-    raise NotImplementedError
+    """Record the last error code, fenced by epoch and only while pending."""
+    await s.execute(_RECORD_ERROR, {"id": payment_id, "code": code, "epoch": epoch})
+
+
+_REOPEN = text(
+    """
+    UPDATE payments SET delivery_state = 'pending', dead_lettered_at = NULL,
+                        dead_letter_reason = NULL, last_error = NULL, attempts_base = attempts
+    WHERE id = :id AND delivery_state = 'dead_lettered'
+    RETURNING id
+    """
+).bindparams(bindparam("id", type_=PG_UUID(as_uuid=True)))
 
 
 async def reopen(s: AsyncSession, payment_id: UUID) -> bool:
     """Reopen a dead-lettered payment with a fresh attempt budget."""
-    raise NotImplementedError
+    return (await s.execute(_REOPEN, {"id": payment_id})).first() is not None
 
 
 async def find_dead(

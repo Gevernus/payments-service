@@ -114,3 +114,18 @@ def test_decode_known_handles_colons() -> None:
 )
 def test_decode_known_invalid_ignored(value: object) -> None:
     assert decode_known(value) is None
+
+
+def test_invalid_headers_are_logged() -> None:
+    from structlog.testing import capture_logs
+
+    with capture_logs() as logs:
+        Envelope.from_headers(
+            {"x-known-outcome": "dead:bogus", "x-deferrals": "many", "x-request-id": 42}
+        )
+        Envelope.from_headers({"x-known-outcome": "delivered:1", "x-deferrals": 2})
+        Envelope.from_headers({})
+
+    warned = [entry["header"] for entry in logs if entry["event"] == "envelope.invalid_header"]
+    assert sorted(warned) == ["x-deferrals", "x-known-outcome", "x-request-id"]
+    assert all(entry["log_level"] == "warning" for entry in logs)
