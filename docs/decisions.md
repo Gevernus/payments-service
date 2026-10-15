@@ -136,6 +136,16 @@ A single TTL queue with per-message expiry (head-of-line blocking: a long delay 
 holds back shorter ones). Publishing on the consuming connection (flow control on publish blocks
 consumption too).
 
+**Alternative: retry rows in the outbox.** On a failed attempt the handler would, in one
+transaction, spend the attempt and insert an outbox row with `available_at = now() + delay`; the
+relay would publish it when due, and the original message would be acked. That removes the copy
+publisher, the TTL ladder and `x-deferrals`. It was not chosen for three reasons. With the
+database down there is nothing to write the retry into, so the handler could only nack in a hot
+loop that burns `x-delivery-limit`, or sleep inside the handler. The known-outcome path (the 2xx
+was received, the database is down, the outcome is recorded later without a second POST) would be
+lost, because that state lives in the message headers. And the retry delay would depend on the
+relay poll interval instead of the queue TTL.
+
 **Consequences.** A crash between the copy and the ack produces two copies; the budget and the
 automaton absorb them. Changing the delay declares new queues instead of failing on argument
 mismatch. Under `Connection.Blocked` the handler waits and retries instead of hanging forever.

@@ -1,9 +1,27 @@
 """Shared harness for the consumer, replay and consumer-process tests.
 
-It builds settings with a consistent timeout chain, inserts payments the way the API would,
-publishes events the way the relay would, runs the real consumer application in-process or as a
-subprocess, and gives tests a view of the queues (the dead-letter queue and a spy queue that
-sees every message routed to `payments.new`, including copies that come back from retry queues).
+Settings and processes
+- consumer_settings: settings with fast retries and a consistent timeout chain
+- worker_env: the environment that makes a subprocess build the same settings
+- run_cli: run `python -m payments.cli` against the test services
+
+Fault injection
+- start_amqp_proxy, start_db_proxy, cut: TCP proxies in front of RabbitMQ and PostgreSQL
+
+Database
+- insert_payment: a payment row in any consistent state, without an outbox row
+- payment_row, outbox_events, insert_outbox_event, make_attempt_stale: read and adjust rows
+
+RabbitMQ
+- Rabbit (fixture `rabbit`): publish events, raw messages, queue depths, the retry queue binding
+- QueueTap via Rabbit.dlq() and Rabbit.spy(): the dead-letter queue and a spy on every delivery
+  to `payments.new`, including copies that return from retry queues; waits on counts and headers
+
+Running the system
+- Env (fixture `env`): payments for a webhook receiver path, row and POST lookups, state waits
+- running_consumer: the real consumer application in-process
+- running_handler: the same handler on real collaborators, with the copy publisher on its own URL
+- relay_runner, publish_outbox: a relay that carries outbox rows to the broker
 """
 
 import asyncio

@@ -58,7 +58,22 @@ Outcome = Done | RetryLater | DeadLetter
 
 
 class Processor:
-    """Runs one processing attempt for a payment."""
+    """Runs one processing attempt for a payment.
+
+    State and event                         -> result       DB transition
+    known "delivered" (no gateway/webhook)  -> Done          mark_delivered
+    known "dead"                            -> DeadLetter   mark_dead, fenced by epoch
+    no attempt: budget spent, stale         -> DeadLetter   mark_exhausted (max_attempts)
+    no attempt: dead_lettered / delivered   -> DeadLetter / Done   none
+    no attempt: another attempt in flight   -> AttemptInFlight (the handler defers)
+    attempt, gateway unavailable or bug     -> RetryLater   record_error (gateway_unavailable,
+                                                            unexpected)
+    attempt, webhook delivered              -> Done         mark_delivered
+    attempt, webhook retryable              -> RetryLater   record_error
+    attempt, webhook permanent              -> DeadLetter   mark_dead (permanent)
+    any failure on the last attempt         -> DeadLetter   mark_dead (max_attempts)
+    database unavailable                    -> DatabaseUnavailable (defer; carries a known outcome)
+    """
 
     def __init__(
         self,
