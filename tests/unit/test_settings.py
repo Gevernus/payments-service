@@ -57,3 +57,19 @@ def test_require_webhook_key_decodes_whsec() -> None:
     assert make_settings(**VALID, webhook_secret=secret).require_webhook_key() == other
     with pytest.raises(RuntimeError):
         make_settings(**VALID, webhook_secret=None).require_webhook_key()
+
+
+def test_retry_delays_double_from_base() -> None:
+    settings = make_settings(**VALID, retry_base_delay_ms=5000)
+    assert settings.retry_delays_ms == [5000, 10000]
+    assert make_settings(**{**VALID, "retry_max_attempts": 5}).retry_delays_ms == [
+        200,
+        400,
+        800,
+        1600,
+    ]
+
+
+def test_internal_hosts_parse_csv() -> None:
+    settings = make_settings(**VALID, webhook_internal_hosts=" Receiver , hooks.internal,")
+    assert settings.webhook_internal_hosts == {"receiver", "hooks.internal"}

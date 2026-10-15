@@ -54,6 +54,10 @@ def test_amount_quantizes_exponent() -> None:
         "\u0661\u0660\u0660",  # Arabic-Indic digits
         " 100",
         True,
+        "10000000000",  # eleven integer digits
+        "100000000000.00",
+        10000000000,
+        1e-7,
     ],
 )
 def test_amount_rejects(value: object) -> None:

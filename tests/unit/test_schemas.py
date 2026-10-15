@@ -59,6 +59,21 @@ def test_metadata_limits() -> None:
         PaymentCreate.model_validate(body(metadata={"k": [{"deep": "a\u0000"}]}))
 
 
+def test_metadata_depth_boundary() -> None:
+    assert PaymentCreate.model_validate(body(metadata=nested(10)))
+    with pytest.raises(ValidationError):
+        PaymentCreate.model_validate(body(metadata=nested(11)))
+
+
+def test_metadata_size_boundary() -> None:
+    """The serialized form `{"k":"..."}` has 8 bytes of overhead around the value."""
+    limit = 16 * 1024
+    assert PaymentCreate.model_validate(body(metadata={"k": "x" * (limit - 8 - 1)}))
+    assert PaymentCreate.model_validate(body(metadata={"k": "x" * (limit - 8)}))
+    with pytest.raises(ValidationError):
+        PaymentCreate.model_validate(body(metadata={"k": "x" * (limit - 8 + 1)}))
+
+
 def test_description_defaults_empty() -> None:
     payload = PaymentCreate.model_validate(body())
     assert payload.description == ""

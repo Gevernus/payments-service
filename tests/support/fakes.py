@@ -98,7 +98,7 @@ class FakeWebhookSender:
 
 
 def make_settings(**overrides: Any) -> Settings:
-    """Settings for tests: no gateway delay, fast retries, short staleness, fixed secrets."""
+    """Settings for tests: no gateway delay, fast retries, short deadlines, fixed secrets."""
     values: dict[str, Any] = {
         "database_url": os.environ.get(
             "TEST_DATABASE_URL", "postgresql+asyncpg://postgres@127.0.0.1:55432/payments"
@@ -107,7 +107,10 @@ def make_settings(**overrides: Any) -> Settings:
         "gateway_min_delay_s": 0,
         "gateway_max_delay_s": 0,
         "retry_base_delay_ms": 200,
-        "stale_after_s": 2,
+        # A timeout chain valid under design §7.5 with short deadlines (stale >= 0 + 0.5 + 2 * 1).
+        "webhook_total_timeout_s": 0.5,
+        "db_call_timeout_s": 1,
+        "stale_after_s": 3,
         "api_key": SecretStr(TEST_API_KEY),
         "webhook_secret": SecretStr(TEST_WEBHOOK_SECRET),
     }

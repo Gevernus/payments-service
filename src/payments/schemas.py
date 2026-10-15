@@ -1,12 +1,22 @@
 """Request, response and event schemas."""
 
+import json
+import math
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl, field_serializer
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    field_serializer,
+    field_validator,
+)
 
 from payments.money import Amount
 
@@ -20,6 +30,30 @@ class Currency(StrEnum):
     RUB = "RUB"
     USD = "USD"
     EUR = "EUR"
+
+
+METADATA_MAX_BYTES = 16 * 1024
+METADATA_MAX_DEPTH = 10
+
+
+def _check_metadata_value(value: Any, depth: int) -> None:
+    """Walk a JSON value; `depth` is the nesting level of the containers around it."""
+    if isinstance(value, str):
+        if "\x00" in value:
+            raise ValueError("metadata must not contain NUL characters")
+    elif isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("metadata numbers must be finite")
+    elif isinstance(value, list | dict):
+        if depth > METADATA_MAX_DEPTH:
+            raise ValueError(f"metadata is nested deeper than {METADATA_MAX_DEPTH} levels")
+        if isinstance(value, list):
+            for item in value:
+                _check_metadata_value(item, depth + 1)
+        else:
+            for key, item in value.items():
+                _check_metadata_value(key, depth + 1)
+                _check_metadata_value(item, depth + 1)
 
 
 class PaymentStatus(StrEnum):
@@ -48,6 +82,22 @@ class PaymentCreate(BaseModel):
     description: str = Field(default="", max_length=1000)
     metadata: dict[str, Any] = Field(default_factory=dict)
     webhook_url: HttpUrl
+
+    @field_validator("description")
+    @classmethod
+    def _description_without_nul(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("description must not contain NUL characters")
+        return value
+
+    @field_validator("metadata")
+    @classmethod
+    def _metadata_within_limits(cls, value: dict[str, Any]) -> dict[str, Any]:
+        _check_metadata_value(value, 1)
+        size = len(json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode())
+        if size > METADATA_MAX_BYTES:
+            raise ValueError(f"metadata is larger than {METADATA_MAX_BYTES} bytes")
+        return value
 
 
 class PaymentAccepted(BaseModel):
@@ -102,7 +152,30 @@ class PaymentOut(PaymentData):
     @classmethod
     def from_payment(cls, p: "Payment") -> "PaymentOut":
         """Build the response from an ORM row."""
-        raise NotImplementedError
+        reason = p.dead_letter_reason
+        return cls.model_validate(
+            {
+                "payment_id": p.id,
+                "amount": p.amount,
+                "currency": p.currency,
+                "description": p.description,
+                "metadata": p.meta,
+                "status": p.status,
+                "created_at": p.created_at,
+                "processed_at": p.processed_at,
+                "idempotency_key": p.idempotency_key,
+                "webhook_url": p.webhook_url,
+                "delivery": {
+                    "state": p.delivery_state,
+                    "attempts": p.attempts,
+                    "last_attempt_at": p.last_attempt_at,
+                    "delivered_at": p.delivered_at,
+                    "dead_lettered_at": p.dead_lettered_at,
+                    "dead_letter_reason": reason.value if reason is not None else None,
+                    "last_error": p.last_error,
+                },
+            }
+        )
 
 
 class PaymentEvent(BaseModel):

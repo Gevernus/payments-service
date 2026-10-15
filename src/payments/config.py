@@ -1,10 +1,14 @@
 """Application settings."""
 
+import base64
+import binascii
 from functools import lru_cache
 from typing import Annotated, Any, Literal
 
 from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+_MIN_API_KEY_BYTES = 32
 
 
 class Settings(BaseSettings):
@@ -43,31 +47,62 @@ class Settings(BaseSettings):
     @field_validator("webhook_internal_hosts", mode="before")
     @classmethod
     def _split_hosts(cls, value: Any) -> Any:
-        """Parse a comma-separated host list (the string form is not implemented yet)."""
+        """Parse a comma-separated host list into a set of lower-case host names."""
         if isinstance(value, str):
-            raise NotImplementedError
+            return frozenset(part.strip().lower() for part in value.split(",") if part.strip())
         return value
 
     @model_validator(mode="after")
     def _check_consistency(self) -> "Settings":
-        """Check min <= max, RETRY_MAX_ATTEMPTS >= 2 and the timeout chain (design §7.5).
-
-        Pass-through until the validator is implemented, so that settings can be constructed.
-        """
+        """Check min <= max, RETRY_MAX_ATTEMPTS >= 2 and the timeout chain (design §7.5)."""
+        if self.gateway_min_delay_s > self.gateway_max_delay_s:
+            raise ValueError("GATEWAY_MIN_DELAY_S must not exceed GATEWAY_MAX_DELAY_S")
+        if self.retry_max_attempts < 2:
+            raise ValueError("RETRY_MAX_ATTEMPTS must be at least 2")
+        if self.outbox_lease_s <= 2 * self.rabbit_publish_timeout_s:
+            raise ValueError("OUTBOX_LEASE_S must exceed 2 * RABBIT_PUBLISH_TIMEOUT_S")
+        in_flight = self.gateway_max_delay_s + self.webhook_total_timeout_s
+        stale_min = in_flight + 2 * self.db_call_timeout_s
+        if self.stale_after_s < stale_min:
+            raise ValueError(
+                "STALE_AFTER_S must be at least GATEWAY_MAX_DELAY_S + WEBHOOK_TOTAL_TIMEOUT_S "
+                f"+ 2 * DB_CALL_TIMEOUT_S ({stale_min})"
+            )
+        graceful_min = in_flight + 4 * self.db_call_timeout_s + self.rabbit_publish_timeout_s
+        if self.consumer_graceful_timeout_s < graceful_min:
+            raise ValueError(
+                "CONSUMER_GRACEFUL_TIMEOUT_S must be at least GATEWAY_MAX_DELAY_S + "
+                "WEBHOOK_TOTAL_TIMEOUT_S + 4 * DB_CALL_TIMEOUT_S + RABBIT_PUBLISH_TIMEOUT_S "
+                f"({graceful_min})"
+            )
         return self
 
     def require_api_key(self) -> bytes:
         """Return the API key, or raise RuntimeError if it is missing or shorter than 32 bytes."""
-        raise NotImplementedError
+        if self.api_key is None:
+            raise RuntimeError("API_KEY is not set")
+        key = self.api_key.get_secret_value().encode()
+        if len(key) < _MIN_API_KEY_BYTES:
+            raise RuntimeError(f"API_KEY must be at least {_MIN_API_KEY_BYTES} bytes long")
+        return key
 
     def require_webhook_key(self) -> bytes:
         """Return the decoded webhook signing key (the part after the `whsec_` prefix)."""
-        raise NotImplementedError
+        if self.webhook_secret is None:
+            raise RuntimeError("WEBHOOK_SECRET is not set")
+        encoded = self.webhook_secret.get_secret_value().removeprefix("whsec_")
+        try:
+            key = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise RuntimeError("WEBHOOK_SECRET is not valid base64") from exc
+        if not key:
+            raise RuntimeError("WEBHOOK_SECRET is empty")
+        return key
 
     @property
     def retry_delays_ms(self) -> list[int]:
-        """Delays of the retry ladder in milliseconds."""
-        raise NotImplementedError
+        """Delays of the retry ladder in milliseconds: base * 2**(i-1), i in 1..attempts-1."""
+        return [self.retry_base_delay_ms * 2 ** (i - 1) for i in range(1, self.retry_max_attempts)]
 
 
 @lru_cache
