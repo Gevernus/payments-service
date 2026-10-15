@@ -1,0 +1,73 @@
+[project]
+name = "payments-service"
+version = "0.1.0"
+description = "Asynchronous payment processing service"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.120",
+    "uvicorn[standard]",
+    "pydantic>=2.11",
+    "pydantic-settings",
+    "sqlalchemy[asyncio]>=2.0,<2.1",
+    "asyncpg",
+    "alembic",
+    "faststream[rabbit]>=0.7,<0.8",
+    "httpx",
+    "structlog",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "testcontainers[postgres,rabbitmq]",
+    "trustme",
+    "standardwebhooks",
+    "mypy",
+    "ruff",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/payments"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+addopts = "--strict-markers"
+testpaths = ["tests"]
+markers = [
+    "unit: tests without external infrastructure",
+    "integration: tests that need PostgreSQL and RabbitMQ",
+    "e2e: tests that need the full compose stack",
+]
+filterwarnings = ["error::DeprecationWarning:payments"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["docs"]
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "A", "C4", "DTZ", "T20", "SIM", "RET", "PT", "ASYNC", "S", "BLE", "PERF", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/payments/errors.py" = ["N818"]  # exception names are part of the module interface
+"tests/**" = ["ASYNC109", "S101", "S104", "S105", "S106", "S603", "S607"]
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
+files = ["src", "tests"]
+python_version = "3.13"
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
