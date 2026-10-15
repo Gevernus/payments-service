@@ -63,3 +63,34 @@ def test_amount_quantizes_exponent() -> None:
 def test_amount_rejects(value: object) -> None:
     with pytest.raises(ValidationError):
         ADAPTER.validate_python(value)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (Decimal("100"), "100.00"),
+        (Decimal("100.5"), "100.50"),
+        (Decimal("1E+2"), "100.00"),
+        (Decimal("9999999999.99"), "9999999999.99"),
+    ],
+)
+def test_amount_accepts_decimal_instance(value: Decimal, expected: str) -> None:
+    result = ADAPTER.validate_python(value)
+    assert str(result) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        Decimal("0"),
+        Decimal("-1"),
+        Decimal("1.001"),
+        Decimal("NaN"),
+        Decimal("Infinity"),
+        Decimal("10000000000"),
+        Decimal("1E+30"),
+    ],
+)
+def test_amount_rejects_decimal_instance(value: Decimal) -> None:
+    with pytest.raises(ValidationError):
+        ADAPTER.validate_python(value)

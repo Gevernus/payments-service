@@ -73,3 +73,28 @@ def test_retry_delays_double_from_base() -> None:
 def test_internal_hosts_parse_csv() -> None:
     settings = make_settings(**VALID, webhook_internal_hosts=" Receiver , hooks.internal,")
     assert settings.webhook_internal_hosts == {"receiver", "hooks.internal"}
+
+
+def test_loggable_masks_credentials_and_omits_secrets() -> None:
+    settings = make_settings(
+        **VALID,
+        database_url="postgresql+asyncpg://user:s3cr3t@db.example:5432/payments",
+        rabbitmq_url="amqp://guest:hunter2@mq.example:5672/?heartbeat=10",
+        api_key=SecretStr("k" * 32),
+        webhook_secret=SecretStr(TEST_WEBHOOK_SECRET),
+    )
+
+    logged = settings.loggable()
+
+    assert logged["database_url"] == "postgresql+asyncpg://user:***@db.example:5432/payments"
+    assert logged["rabbitmq_url"] == "amqp://guest:***@mq.example:5672/?heartbeat=10"
+    assert logged["api_key_set"] is True
+    assert "s3cr3t" not in repr(logged)
+    assert "hunter2" not in repr(logged)
+    assert TEST_WEBHOOK_SECRET not in repr(logged)
+    assert "k" * 32 not in repr(logged)
+
+
+def test_loggable_keeps_urls_without_password() -> None:
+    settings = make_settings(**VALID, database_url="postgresql+asyncpg://user@db.example/payments")
+    assert settings.loggable()["database_url"] == "postgresql+asyncpg://user@db.example/payments"

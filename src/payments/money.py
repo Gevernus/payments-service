@@ -25,9 +25,9 @@ def parse_amount(value: object) -> Decimal:
         if _AMOUNT_RE.fullmatch(value) is None:
             raise ValueError(f"amount must match {AMOUNT_PATTERN}")
         return Decimal(value).quantize(_CENT)
-    if isinstance(value, int | float):
+    if isinstance(value, int | float | Decimal):
         # repr() gives the shortest decimal that round-trips, so 0.1 stays 0.1.
-        number = Decimal(repr(value))
+        number = value if isinstance(value, Decimal) else Decimal(repr(value))
         if not number.is_finite():
             raise ValueError("amount must be finite")
         try:

@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import re
 from functools import lru_cache
 from typing import Annotated, Any, Literal
 
@@ -9,6 +10,12 @@ from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 _MIN_API_KEY_BYTES = 32
+_URL_PASSWORD = re.compile(r"(://[^:/?#]*:)[^/?#]*@")
+
+
+def mask_url_password(url: str) -> str:
+    """Replace the password in a URL with `***`."""
+    return _URL_PASSWORD.sub(r"\1***@", url)
 
 
 class Settings(BaseSettings):
@@ -98,6 +105,16 @@ class Settings(BaseSettings):
         if not key:
             raise RuntimeError("WEBHOOK_SECRET is empty")
         return key
+
+    def loggable(self) -> dict[str, Any]:
+        """Settings safe to log: no secrets, URL passwords masked."""
+        values = self.model_dump(exclude={"api_key", "webhook_secret"})
+        values["database_url"] = mask_url_password(self.database_url)
+        values["rabbitmq_url"] = mask_url_password(self.rabbitmq_url)
+        values["webhook_internal_hosts"] = sorted(self.webhook_internal_hosts)
+        values["api_key_set"] = self.api_key is not None
+        values["webhook_secret_set"] = self.webhook_secret is not None
+        return values
 
     @property
     def retry_delays_ms(self) -> list[int]:
