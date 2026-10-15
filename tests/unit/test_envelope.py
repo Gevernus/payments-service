@@ -8,52 +8,42 @@ from payments.errors import DeadReason
 from payments.messaging.envelope import Envelope, decode_known, encode_known
 from payments.services.processing import KnownOutcome
 
-WHITELIST = {"x-request-id", "x-known-outcome", "x-deferrals"}
+WHITELIST = {"x-known-outcome", "x-deferrals"}
 DELIVERED = KnownOutcome("delivered", 2)
 DEAD = KnownOutcome("dead", 0, DeadReason.PERMANENT, "http_404")
 
 
 def test_envelope_table() -> None:
     envelope = Envelope.from_headers(
-        {
-            "x-request-id": "req-1",
-            "x-known-outcome": '{"kind":"delivered","epoch":2}',
-            "x-deferrals": 3,
-        }
+        {"x-known-outcome": '{"kind":"delivered","epoch":2}', "x-deferrals": 3}
     )
-    assert envelope == Envelope(request_id="req-1", known_outcome=DELIVERED, deferrals=3)
+    assert envelope == Envelope(known_outcome=DELIVERED, deferrals=3)
 
-    # Retry: the request id is kept, the known outcome is removed, the counter is reset.
+    # Retry: the known outcome is removed, the counter is reset.
     retried = envelope.retried()
-    assert retried["x-request-id"] == "req-1"
     assert "x-known-outcome" not in retried
     assert retried.get("x-deferrals", 0) == 0
     assert set(retried) <= WHITELIST
 
-    # Defer: the request id is kept, the outcome is set from the exception or kept, the counter
-    # is incremented.
+    # Defer: the outcome is set from the exception or kept, the counter is incremented.
     deferred_with_new = envelope.deferred(DEAD)
-    assert deferred_with_new["x-request-id"] == "req-1"
     assert deferred_with_new["x-known-outcome"] == encode_known(DEAD)
     assert deferred_with_new["x-deferrals"] == 4
 
     deferred_keeping = envelope.deferred(None)
-    assert deferred_keeping["x-request-id"] == "req-1"
     assert deferred_keeping["x-known-outcome"] == encode_known(DELIVERED)
     assert deferred_keeping["x-deferrals"] == 4
 
     # Without any input headers nothing is invented.
     empty = Envelope.from_headers({})
-    assert empty == Envelope(request_id=None, known_outcome=None, deferrals=0)
+    assert empty == Envelope(known_outcome=None, deferrals=0)
     assert empty.deferred(None) == {"x-deferrals": 1}
     assert empty.retried().get("x-deferrals", 0) == 0
-    assert "x-request-id" not in empty.retried()
     assert empty.deferred(DELIVERED)["x-known-outcome"] == encode_known(DELIVERED)
 
 
 def test_envelope_drops_broker_counters() -> None:
     headers: dict[str, Any] = {
-        "x-request-id": "req-2",
         "x-delivery-count": 7,
         "x-death": [{"count": 1, "reason": "rejected", "queue": "payments.new"}],
         "x-first-death-queue": "payments.new",
@@ -70,13 +60,10 @@ def test_envelope_drops_broker_counters() -> None:
         envelope.deferred(DEAD),
     ):
         assert set(produced) <= WHITELIST
-        assert produced["x-request-id"] == "req-2"
 
 
 def test_envelope_ignores_invalid_values() -> None:
-    envelope = Envelope.from_headers(
-        {"x-known-outcome": "dead:bogus", "x-deferrals": "many", "x-request-id": 42}
-    )
+    envelope = Envelope.from_headers({"x-known-outcome": "dead:bogus", "x-deferrals": "many"})
 
     assert envelope.known_outcome is None
     assert envelope.deferrals == 0

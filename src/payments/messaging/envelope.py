@@ -8,7 +8,6 @@ from pydantic import TypeAdapter, ValidationError
 
 from payments.services.processing import KnownOutcome
 
-REQUEST_ID = "x-request-id"
 KNOWN_OUTCOME = "x-known-outcome"
 DEFERRALS = "x-deferrals"
 
@@ -32,7 +31,6 @@ def _count(value: object) -> int:
 class Envelope:
     """Whitelisted headers of a payment message."""
 
-    request_id: str | None
     known_outcome: KnownOutcome | None
     deferrals: int
 
@@ -40,17 +38,13 @@ class Envelope:
     def from_headers(cls, headers: Mapping[str, Any]) -> "Envelope":
         """Read the whitelisted headers; invalid values are ignored."""
         return cls(
-            request_id=_text(headers.get(REQUEST_ID)),
             known_outcome=decode_known(_text(headers.get(KNOWN_OUTCOME))),
             deferrals=_count(headers.get(DEFERRALS)),
         )
 
-    def _base(self) -> dict[str, Any]:
-        return {REQUEST_ID: self.request_id} if self.request_id is not None else {}
-
     def deferred(self, known: KnownOutcome | None) -> dict[str, Any]:
         """Headers for a message that is put back because the database was unavailable."""
-        headers = self._base()
+        headers: dict[str, Any] = {}
         carried = known or self.known_outcome
         if carried is not None:
             headers[KNOWN_OUTCOME] = encode_known(carried)
@@ -59,7 +53,7 @@ class Envelope:
 
     def retried(self) -> dict[str, Any]:
         """Headers for a message sent to a retry queue (the error stays in the database)."""
-        return self._base()
+        return {}
 
 
 def encode_known(known: KnownOutcome) -> str:

@@ -35,7 +35,6 @@ async def test_create_payment_returns_202(
     assert body["status"] == "pending"
     assert response.headers["location"].endswith(f"/api/v1/payments/{payment_id}")
     assert response.headers["idempotent-replayed"] == "false"
-    assert response.headers["x-request-id"]
 
     async with db_sessions() as session:
         payment = (

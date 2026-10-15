@@ -1,31 +1,26 @@
 """FastAPI application factory."""
 
-import re
 import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, cast
-from uuid import uuid4
 
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from payments.api.problem import problem_response
 from payments.api.routes import health_router, payments_router
 from payments.config import Settings, get_settings
-from payments.db.session import Db, create_engine, create_session_factory, is_db_unavailable
+from payments.db.session import Db, create_engine, create_session_factory
 from payments.errors import DatabaseUnavailable, DomainError, WebhookUrlNotAllowed
 from payments.logging import configure_logging
 from payments.services.payments import PaymentService
 
 log = structlog.get_logger(__name__)
-
-REQUEST_ID_HEADER = "x-request-id"
-_REQUEST_ID = re.compile(r"[\x21-\x7E]{1,128}")
 
 
 class ApiKeyMiddleware:
@@ -50,36 +45,6 @@ class ApiKeyMiddleware:
                 await response(scope, receive, send)
                 return
         await self._app(scope, receive, send)
-
-
-class RequestIdMiddleware:
-    """Propagates a valid X-Request-Id or generates one; binds it to the log context."""
-
-    def __init__(self, app: ASGIApp) -> None:
-        self._app = app
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Attach the request id to the scope, the log context and the response."""
-        if scope["type"] != "http":
-            await self._app(scope, receive, send)
-            return
-        supplied = next(
-            (v.decode("latin-1") for k, v in scope["headers"] if k == REQUEST_ID_HEADER.encode()),
-            "",
-        )
-        request_id = supplied if _REQUEST_ID.fullmatch(supplied) else uuid4().hex
-        scope.setdefault("state", {})["request_id"] = request_id
-
-        async def send_with_id(message: Message) -> None:
-            if message["type"] == "http.response.start":
-                message = {
-                    **message,
-                    "headers": [*message["headers"], (b"x-request-id", request_id.encode())],
-                }
-            await send(message)
-
-        with structlog.contextvars.bound_contextvars(request_id=request_id):
-            await self._app(scope, receive, send_with_id)
 
 
 async def _domain_error(_request: Request, error: Exception) -> JSONResponse:
@@ -125,17 +90,13 @@ async def _http_error(_request: Request, error: Exception) -> JSONResponse:
 
 
 async def _database_unavailable(_request: Request, error: Exception) -> JSONResponse:
-    exc = cast(DatabaseUnavailable, error)
-    cause = exc.__cause__
-    if cause is not None and is_db_unavailable(cause):
-        return problem_response(
-            503,
-            code="database_unavailable",
-            title="Database is unavailable",
-            headers={"Retry-After": "1"},
-        )
-    log.error("db.error", exc_info=exc)
-    return problem_response(500, code="internal_error", title="Internal server error")
+    log.warning("db.unavailable", exc_info=error)
+    return problem_response(
+        503,
+        code="database_unavailable",
+        title="Database is unavailable",
+        headers={"Retry-After": "1"},
+    )
 
 
 async def _unexpected(_request: Request, exc: Exception) -> JSONResponse:
@@ -169,7 +130,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_exception_handler(StarletteHTTPException, _http_error)
     app.add_exception_handler(DatabaseUnavailable, _database_unavailable)
     app.add_exception_handler(Exception, _unexpected)
-    # The last middleware added is the outermost: the request id wraps even the 401 response.
     app.add_middleware(ApiKeyMiddleware, key=api_key)
-    app.add_middleware(RequestIdMiddleware)
     return app

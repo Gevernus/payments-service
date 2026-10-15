@@ -9,12 +9,9 @@ from typing import Any, Protocol
 
 import structlog
 
-from payments.errors import GatewayUnavailable
 from payments.schemas import Currency, PaymentStatus
 
 log = structlog.get_logger(__name__)
-
-_HINT_KEY = "emulator_outcome"
 
 
 class Gateway(Protocol):
@@ -44,13 +41,11 @@ class EmulatedGateway:
         success_rate: float,
         min_delay_s: float,
         max_delay_s: float,
-        outcome_hints: bool,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._success_rate = success_rate
         self._min_delay_s = min_delay_s
         self._max_delay_s = max_delay_s
-        self._outcome_hints = outcome_hints
         self._sleep = sleep
 
     async def charge(
@@ -74,11 +69,4 @@ class EmulatedGateway:
             delay_s=round(delay, 3),
         )
         await self._sleep(delay)
-        hint = metadata.get(_HINT_KEY) if self._outcome_hints else None
-        if hint == "error":
-            raise GatewayUnavailable("emulated gateway failure")
-        if hint == "succeeded":
-            return PaymentStatus.SUCCEEDED
-        if hint == "failed":
-            return PaymentStatus.FAILED
         return PaymentStatus.SUCCEEDED if succeeded else PaymentStatus.FAILED

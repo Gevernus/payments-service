@@ -44,7 +44,6 @@ class Event:
     id: uuid.UUID
     payment_id: uuid.UUID
     payload: dict[str, str]
-    headers: dict[str, str]
 
 
 def relay_settings(
@@ -79,7 +78,6 @@ async def add_event(
     sessions: Sessions,
     *,
     routing_key: str = MAIN_QUEUE_NAME,
-    request_id: str | None = None,
 ) -> Event:
     """Insert a payment and its pending outbox row."""
     event_id, payment_id = uuid.uuid4(), uuid.uuid4()
@@ -88,7 +86,6 @@ async def add_event(
         "payment_id": str(payment_id),
         "occurred_at": datetime.now(UTC).isoformat(),
     }
-    headers = {"x-request-id": request_id} if request_id else {}
     async with sessions.begin() as session:
         await session.execute(
             text(
@@ -99,19 +96,18 @@ async def add_event(
         )
         await session.execute(
             text(
-                "INSERT INTO outbox (id, payment_id, event_type, routing_key, payload, headers)"
+                "INSERT INTO outbox (id, payment_id, event_type, routing_key, payload)"
                 " VALUES (:id, :payment_id, 'payment.created', :routing_key,"
-                " CAST(:payload AS jsonb), CAST(:headers AS jsonb))"
+                " CAST(:payload AS jsonb))"
             ),
             {
                 "id": event_id,
                 "payment_id": payment_id,
                 "routing_key": routing_key,
                 "payload": json.dumps(payload),
-                "headers": json.dumps(headers),
             },
         )
-    return Event(event_id, payment_id, payload, headers)
+    return Event(event_id, payment_id, payload)
 
 
 async def outbox_rows(sessions: Sessions) -> dict[uuid.UUID, dict[str, Any]]:
@@ -266,7 +262,7 @@ async def test_relay_publishes_and_deletes(
 ) -> None:
     async with relay_stack(relay_config) as relay:
         observer = await observer_factory()
-        event = await add_event(db_sessions, request_id="req-relay-1")
+        event = await add_event(db_sessions)
 
         published = await relay.run_once()
 
@@ -277,7 +273,6 @@ async def test_relay_publishes_and_deletes(
         assert message.correlation_id == str(event.payment_id)
         assert message.delivery_mode == aio_pika.DeliveryMode.PERSISTENT
         assert json.loads(message.body) == event.payload
-        assert message.headers["x-request-id"] == "req-relay-1"
         assert message.routing_key == MAIN_QUEUE_NAME
         assert await outbox_count(db_sessions) == 0
         assert await relay.run_once() == 0

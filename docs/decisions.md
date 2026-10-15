@@ -57,7 +57,8 @@ requests with the same key must not create two payments.
 
 **Decision.** A unique constraint on `idempotency_key` and `INSERT ... ON CONFLICT DO NOTHING
 RETURNING`. The loser reads the existing row and compares a versioned fingerprint (`v1:` plus
-SHA-256 of a canonical JSON form of the request). Behaviour follows
+SHA-256 of the canonical JSON of the validated request, so `100` and `"100.00"` agree while
+metadata is hashed as parsed). Behaviour follows
 draft-ietf-httpapi-idempotency-key-header: a missing or malformed key is 400; the same key with
 a different body is 422; a matching repeat returns 202 with the original `payment_id` and
 `created_at`, the current status and `Idempotent-Replayed: true` (section 4.3).
@@ -161,7 +162,7 @@ spoofed by any publisher).
 **Consequences.** The DLQ may contain duplicates, and a malformed message without a
 `payment_id` exists only there. Moving a message from the DLQ in the management UI is harmless.
 A `pending` payment whose message hit the broker's delivery limit is recovered with
-`replay --stuck-pending`.
+`replay stuck`.
 
 ---
 
@@ -257,7 +258,7 @@ Deliberately left out of this implementation:
 
 - Metrics and tracing: queue depths, DLQ size, outbox backlog age, attempt and deferral rates,
   webhook latency; alerts on DLQ growth and on payments stuck in `pending`.
-- A reconciler that runs `replay --stuck-pending` on a schedule instead of an operator.
+- A reconciler that runs `replay stuck` on a schedule instead of an operator.
 - A health check that verifies the consumer's queue exists (today a queue deleted by an
   operator leaves the consumer idle while its health check is green).
 - Per-merchant webhook secrets with rotation (Standard Webhooks allows several signatures).

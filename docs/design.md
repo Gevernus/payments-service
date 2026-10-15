@@ -43,10 +43,10 @@ taken and the reason.
 | T9 | Amount is "decimal" | `0 < amount <= 9 999 999 999.99`, at most 2 fractional digits; as a string it must match `^\d{1,10}(\.\d{1,2})?$`. | RUB, USD and EUR all have two minor-unit digits; a JSON number is parsed as a float and only about 15 significant digits are exact. |
 | T10 | `webhook_url` | Both `http` and `https` are accepted; the address must be public (SSRF policy). In compose, `webhook-receiver` and `host.docker.internal` are allowed. | The security property is in the address, not in the scheme. |
 | T11 | Webhook format | Standard Webhooks. | An open specification with reference verification libraries. |
-| T12 | Emulation | Outcome and delay are deterministic functions of the gateway idempotency key (`payment_id`). Hints `metadata.emulator_outcome` in `{succeeded, failed, error}` are honoured only when `GATEWAY_OUTCOME_HINTS=true` (the compose demo mode). | Matches the behaviour of a real payment provider for a repeated key; makes demos and tests deterministic. |
+| T12 | Emulation | Outcome and delay are deterministic functions of the gateway idempotency key (`payment_id`). About `GATEWAY_SUCCESS_RATE` (default 90%) of keys succeed, the rest fail; there are no per-request overrides. Tests pick a payment id with the outcome they need (`payment_id_with_outcome`). | Matches the behaviour of a real payment provider for a repeated key; makes demos and tests deterministic. |
 | T13 | Tables `payments` and `outbox` | Exactly these two tables. | One webhook per payment, so delivery state fits in the payment row. |
 | T14 | `description` | Optional, defaults to `""`, at most 1000 characters. | |
-| T15 | DLQ | The DLQ is a journal of messages that were not processed. Reprocessing is done by a CLI over the database through the outbox: `replay` (dead payments, new budget) and `replay --stuck-pending --older-than T` (payments stuck in `pending`, for example after the broker's delivery limit moved a message to the DLQ). Moving a message out of the DLQ in the management UI is harmless: for a `dead_lettered` payment it is rejected to the DLQ again; for a `pending` payment processing resumes normally. | The truth about a dead payment is in the database; the DLQ cannot override it. |
+| T15 | DLQ | The DLQ is a journal of messages that were not processed. Reprocessing is done by a CLI over the database through the outbox: `replay dead` (dead payments, new budget) and `replay stuck --older-than T` (payments stuck in `pending`, for example after the broker's delivery limit moved a message to the DLQ). Moving a message out of the DLQ in the management UI is harmless: for a `dead_lettered` payment it is rejected to the DLQ again; for a `pending` payment processing resumes normally. | The truth about a dead payment is in the database; the DLQ cannot override it. |
 
 ---
 
@@ -61,7 +61,7 @@ taken and the reason.
 | `consumer` | `uvicorn payments.workers.consumer:create_app --factory` (AsgiFastStream) | `payments.new` to processing, retry and DLQ |
 | `migrate` | `alembic upgrade head` | schema, one-shot |
 | `webhook-receiver` | `uvicorn --app-dir tools webhook_receiver:app` | demo and end-to-end receiver |
-| CLI | `python -m payments.cli replay [--reason R] [--payment-id ID] [--limit N]` | return dead payments to processing |
+| CLI | `python -m payments.cli replay dead [--reason R] [--payment-id ID] [--limit N]` | return dead payments to processing |
 
 Every process runs `SELECT 1` at startup, and the relay and consumer also connect to the
 broker. A configuration error kills the process instead of turning into an endless wait for
@@ -113,7 +113,7 @@ src/payments/
   errors.py            domain errors, problem+json, ErrorCode, DeadReason
   db/
     models.py
-    session.py         engine, sessionmaker, is_db_unavailable(), db_call()
+    session.py         engine, sessionmaker, db_call()
     queries.py         all SQL that the guarantees depend on
   services/
     payments.py        create, get
@@ -239,7 +239,6 @@ CREATE TABLE outbox (
   event_type   varchar(64)  NOT NULL,                  -- payment.created | payment.replay_requested
   routing_key  varchar(255) NOT NULL,                  -- payments.new
   payload      jsonb        NOT NULL,
-  headers      jsonb        NOT NULL DEFAULT '{}',
   created_at   timestamptz  NOT NULL DEFAULT now(),
   available_at timestamptz  NOT NULL DEFAULT now(),
   attempts     integer      NOT NULL DEFAULT 0 CHECK (attempts >= 0),
@@ -269,8 +268,8 @@ upgrade succeeds.
   FastAPI turns a `ValueError` or `RecursionError` raised while parsing the body into a 400; the
   handler maps it to 422 `json_invalid` when `isinstance(exc.__cause__, (ValueError,
   RecursionError))`.
-- `is_db_unavailable(exc)` maps to 503; any other `DBAPIError` is a 500.
-- An `X-Request-Id` middleware propagates or generates a request id.
+- Every database failure in the API (`DatabaseUnavailable`) is a 503 with `Retry-After: 1`; the
+  client repeats the request with the same `Idempotency-Key`.
 
 ### 4.2 Authentication
 
@@ -297,24 +296,14 @@ otherwise 400.
 Request fingerprint:
 
 ```python
-_NUM = "\x00num:"   # NUL is rejected in input strings, so the tag cannot collide with data
-
-def _canon(v):
-    if v is None or isinstance(v, (bool, str)):
-        return v
-    if isinstance(v, (int, float)):
-        d = Decimal(repr(v)) if isinstance(v, float) else Decimal(v)
-        return _NUM + format(Decimal(0) if d == 0 else d.normalize(), "f")
-    if isinstance(v, list):
-        return [_canon(x) for x in v]
-    return {k: _canon(x) for k, x in v.items()}
-
-# fingerprint = "v1:" + sha256(canonical JSON of {amount, currency, description, metadata, webhook_url})
+canonical = json.dumps(payload.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+fingerprint = "v1:" + sha256(canonical.encode()).hexdigest()
 ```
 
-Numbers are canonicalised so that `1`, `1.0` and `1.00` in metadata produce the same
-fingerprint, and `-0` equals `0`. The `v1:` prefix allows the canonical form to change later
-without comparing incompatible fingerprints.
+The hash covers the validated model, so `100` and `"100.00"` in `amount` give the same
+fingerprint. Metadata is opaque client data and is hashed as parsed: `{"a": 1}` and `{"a": 1.0}`
+are different requests, and reusing a key across them is a 422. The `v1:` prefix allows the
+canonical form to change later without comparing incompatible fingerprints.
 
 Service flow:
 
@@ -345,8 +334,8 @@ Exception class names appear only in logs.
 
 ### 4.5 Health
 
-`/health/live` returns 200. `/health/ready` runs `SELECT 1` and reads the outbox backlog within
-`asyncio.timeout(2)`. The API does not check the broker: it does not use it.
+`/health/live` returns 200. `/health/ready` runs `SELECT 1` within
+`asyncio.timeout(2)`; 503 if it fails. The API does not check the broker: it does not use it.
 
 ---
 
@@ -363,7 +352,7 @@ Exception class names appear only in logs.
      ORDER BY available_at LIMIT :batch FOR UPDATE SKIP LOCKED)
    UPDATE outbox o SET attempts = o.attempts + 1, available_at = now() + :lease
    FROM due WHERE o.id = due.id
-   RETURNING o.id, o.payment_id, o.event_type, o.routing_key, o.payload, o.headers, o.attempts;
+   RETURNING o.id, o.payment_id, o.event_type, o.routing_key, o.payload, o.attempts;
    ```
 
    The claim commits immediately. The lease (`available_at` in the future) hides the row from
@@ -517,7 +506,6 @@ Properties:
   outcome is already known. Every deferral is logged at WARNING with the `x-deferrals` count.
   Programming errors outside the driver (`TypeError`, `KeyError`, ...) inside an attempt go to
   `_fail("unexpected")`, spend budget and eventually mark the payment.
-  The `is_db_unavailable` predicate is used only by the API (503 versus 500).
 - **The gateway is called outside a transaction.** A parallel duplicate calls it with the same
   key, receives the same outcome, and only one `finalize` CAS wins (gateway contract, 8.1).
 
@@ -525,27 +513,6 @@ Properties:
 Engine: `connect_args={"timeout": 3, "command_timeout": 5, "server_settings":
 {"statement_timeout": "4000", "lock_timeout": "2000", "idle_in_transaction_session_timeout":
 "10000"}}`, `pool_pre_ping=True`.
-
-`is_db_unavailable` (API, 503):
-
-```python
-_NET_ERRNO = {errno.ENETUNREACH, errno.EHOSTUNREACH, errno.ENETDOWN, errno.EHOSTDOWN}
-
-def _is_network(e) -> bool:
-    return isinstance(e, (ConnectionError, socket.gaierror, TimeoutError)) or \
-           (isinstance(e, OSError) and e.errno in _NET_ERRNO)
-
-def is_db_unavailable(exc) -> bool:
-    if _is_network(exc) or isinstance(exc, sqlalchemy.exc.TimeoutError):
-        return True
-    if isinstance(exc, sqlalchemy.exc.DBAPIError) and exc.connection_invalidated:
-        return True
-    orig = getattr(exc, "orig", None)
-    root = getattr(orig, "__cause__", None) or orig
-    return _is_network(root) or isinstance(root, (asyncpg.PostgresConnectionError,
-                                                  asyncpg.CannotConnectNowError,
-                                                  asyncpg.TooManyConnectionsError))
-```
 
 Configuration errors (`ClientConfigurationError`, `FileNotFoundError`) are caught by the
 `SELECT 1` at process startup, and the process exits.
@@ -563,7 +530,7 @@ app = AsgiFastStream(broker, on_startup=[copies.connect, ...], after_shutdown=[c
 @broker.subscriber(topology.MAIN, topology.PAYMENTS, ack_policy=AckPolicy.REJECT_ON_ERROR)
 async def on_payment_event(event: PaymentEvent, msg: RabbitMessage) -> None:
     env = Envelope.from_message(msg)          # invalid headers are logged and ignored
-    bind_contextvars(payment_id=str(event.payment_id), event_id=msg.message_id, request_id=env.request_id)
+    bind_contextvars(payment_id=str(event.payment_id), event_id=msg.message_id)
     try:
         try:
             outcome = await processor.process(event.payment_id, known=env.known_outcome)
@@ -599,7 +566,7 @@ same explicit timeout.
 
 - A malformed body fails decoding; `REJECT_ON_ERROR` sends it to the DLQ (there is nothing to
   mark in the database). An exception in the handler outside the Processor (a bug) also ends in
-  the DLQ with the payment still `pending`; `replay --stuck-pending` recovers it.
+  the DLQ with the payment still `pending`; `replay stuck` recovers it.
 - Catch `Exception`, never `BaseException`; no `asyncio.shield`. `AckPolicy.MANUAL`,
   `NackMessage` and `reject(requeue=True)` are not used.
 - Consumer health: both connections alive and the subscriber running.
@@ -608,7 +575,6 @@ same explicit timeout.
 
 | Header | Type | Written by | Read by | On retry | On defer |
 |---|---|---|---|---|---|
-| `x-request-id` | str | relay (from the outbox row) | handler (logs) | kept | kept |
 | `x-known-outcome` | str: the JSON of `KnownOutcome` (`kind`, `epoch`, `reason`, `code`), read and written through a pydantic `TypeAdapter` | handler on defer | Processor | removed | set from the exception, or kept |
 | `x-deferrals` | int | handler on defer | logs | reset | incremented |
 
@@ -617,15 +583,20 @@ header. An invalid value is ignored without a log line; the message is processed
 
 ### 7.4 Replay
 
-- `python -m payments.cli replay [--reason R] [--payment-id ID] [--limit N] [--dry-run]`:
+- `python -m payments.cli replay dead [--reason R] [--payment-id ID] [--limit N] [--dry-run]`:
   for `dead_lettered` payments, one transaction per payment runs `reopen` (CAS, new epoch) and
   inserts an outbox event `payment.replay_requested`.
-- `python -m payments.cli replay --stuck-pending --older-than 10m [--dry-run]`: for `pending`
+- `python -m payments.cli replay stuck --older-than 10m [--limit N] [--dry-run]`: for `pending`
   payments whose `last_attempt_at` (or `created_at`) is older than the threshold and which have
   no outbox event waiting, insert an outbox event only. No new budget is granted. Each payment
   gets its own transaction and nothing is locked. Choose a threshold of minutes, well above the
   retry ladder plus `STALE_AFTER_S`: a payment still waiting in a retry queue would otherwise get
   a duplicate message, which is harmless because the budget is fenced in the database.
+
+If the database fails mid-run, the CLI prints `error: database is unavailable; re-running is
+safe` and exits with 1. A re-run is idempotent: `reopen` is a CAS on `dead_lettered`, and
+`replay stuck` skips payments that already have an outbox event, so payments handled before the
+failure are not touched again.
 
 The DLQ is not touched: it is a journal. Malformed messages without a `payment_id` require
 manual inspection.
@@ -733,7 +704,7 @@ accessors in the processes that need them. The loaded settings (without secrets)
 | `DB_CALL_TIMEOUT_S` | 5 | all |
 | `RABBIT_PUBLISH_TIMEOUT_S` | 5 | relay, consumer |
 | `OUTBOX_POLL_INTERVAL_S`, `OUTBOX_BATCH_SIZE`, `OUTBOX_LEASE_S` | 0.5, 100, 30 | relay |
-| `GATEWAY_MIN_DELAY_S`, `GATEWAY_MAX_DELAY_S`, `GATEWAY_SUCCESS_RATE`, `GATEWAY_OUTCOME_HINTS` | 2, 5, 0.9, false | consumer |
+| `GATEWAY_MIN_DELAY_S`, `GATEWAY_MAX_DELAY_S`, `GATEWAY_SUCCESS_RATE` | 2, 5, 0.9 | consumer |
 | `RETRY_MAX_ATTEMPTS`, `RETRY_BASE_DELAY_MS` | 3, 5000 | consumer, cli |
 | `CONSUMER_PREFETCH`, `WEBHOOK_TOTAL_TIMEOUT_S` | 10, 15 | consumer |
 
@@ -745,9 +716,9 @@ derived from the timeouts (section 7.5), not configured.
 
 ## 10. Logging
 
-structlog, JSON in compose. Context variables: `request_id` in the API; `payment_id`,
-`event_id` and `request_id` in the consumer, so one request can be traced from the API call to
-the webhook.
+structlog, JSON in compose. Context variables: `payment_id` and `event_id` in the consumer, so
+every line of one payment's processing can be found by the payment id (also the
+`correlation_id` of the message).
 
 Events: `payment.created`, `payment.replayed`, `payment.idempotency_conflict`,
 `outbox.published`, `outbox.publish_failed`, `gateway.charge_started`,
@@ -766,8 +737,7 @@ Events: `payment.created`, `payment.replayed`, `payment.idempotency_conflict`,
   Services: `postgres:17-alpine`; `rabbitmq:4.1.<patch>-management-alpine` with
   `hostname: rabbitmq` (the quorum queue data is tied to the node name); `migrate`, then `api`,
   `relay`, `consumer` (`stop_grace_period: 60s`, `extra_hosts`) and `webhook-receiver`.
-  Application services use `init: true`, `restart: unless-stopped`, `LOG_FORMAT=json` and
-  `GATEWAY_OUTCOME_HINTS=true`.
+  Application services use `init: true`, `restart: unless-stopped`, and `LOG_FORMAT=json`.
 - `compose.e2e.yaml` overrides gateway delays to 0.05 to 0.2 s and `RETRY_BASE_DELAY_MS=200`.
 - The webhook receiver exposes `/hooks/ok`, `/hooks/fail/{n}` (fails the first `n` requests per
   payment), `/hooks/status/{code}`, verifies signatures, and lists received webhooks at
@@ -799,16 +769,12 @@ The test names are listed once, next to the guarantee each one verifies, in
 
 ### 12.1 Unit
 
-- Fingerprint, including a golden value and the absence of collisions between the number tag
-  and string data.
+- Fingerprint, including a golden value; `100` and `"100.00"` agree, metadata is hashed as parsed.
 - Amount and metadata validation; the Idempotency-Key header.
 - Webhook signing, verified against the reference `standardwebhooks` library.
 - `is_public`, `check_url`, `resolve_checked`; the sender pins the resolved IP (the request goes
   to the IP, with the original `Host` and `sni_hostname`, and the resolver is called once).
 - Webhook result classification, including `tls_error`.
-- `is_db_unavailable`: network error chains, pool timeouts, `connection_invalidated` and SQLSTATE
-  53300 are "unavailable"; `ClientConfigurationError`, `DataError`, `FileNotFoundError`,
-  `QueryCanceledError` and CHECK violations are not.
 - `Envelope`: every cell of the header table in 7.3; `x-delivery-count` and `x-death` are never
   copied.
 - Gateway: the contract, the outcome distribution, the hints.

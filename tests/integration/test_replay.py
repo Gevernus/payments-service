@@ -24,7 +24,7 @@ async def test_replay_reopens_and_delivers(env: Env, rabbit: Rabbit) -> None:
         assert dead["dead_letter_reason"] == "max_attempts"
         assert len(env.posts(payment_id)) == 3
 
-        code, output = await run_cli(settings, "replay", "--payment-id", str(payment_id))
+        code, output = await run_cli(settings, "replay", "dead", "--payment-id", str(payment_id))
 
         assert code == 0, output
         reopened = await env.row(payment_id)
@@ -56,7 +56,7 @@ async def test_replay_stuck_pending(env: Env, rabbit: Rabbit) -> None:
     waiting = await env.new_payment()
     await insert_outbox_event(env.sessions, waiting)
 
-    code, output = await run_cli(settings, "replay", "--stuck-pending", "--older-than", "0")
+    code, output = await run_cli(settings, "replay", "stuck", "--older-than", "0")
 
     assert code == 0, output
     (event,) = await outbox_events(env.sessions, stuck)
@@ -88,11 +88,11 @@ async def test_replay_dry_run_changes_nothing(env: Env) -> None:
     stuck = await env.new_payment(age_s=3600, attempts=1, last_attempt_ago_s=3600)
     before = {pid: await env.row(pid) for pid in (dead, stuck)}
 
-    code, output = await run_cli(settings, "replay", "--dry-run")
+    code, output = await run_cli(settings, "replay", "dead", "--dry-run")
     assert code == 0, output
-    code, output = await run_cli(
-        settings, "replay", "--stuck-pending", "--older-than", "0", "--dry-run"
-    )
+    code, output = await run_cli(settings, "replay", "dead", "--limit", "0")
+    assert code == 2, output  # a usage error, before any database access
+    code, output = await run_cli(settings, "replay", "stuck", "--older-than", "0", "--dry-run")
     assert code == 0, output
 
     assert {pid: await env.row(pid) for pid in (dead, stuck)} == before

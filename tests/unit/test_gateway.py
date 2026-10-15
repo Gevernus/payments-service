@@ -1,4 +1,4 @@
-"""The payment gateway contract, its emulation and its outcome hints (design §8.1)."""
+"""The payment gateway contract, its emulation (design §8.1)."""
 
 from collections.abc import Callable
 from decimal import Decimal
@@ -6,10 +6,9 @@ from typing import Any
 
 import pytest
 
-from payments.errors import GatewayUnavailable
 from payments.schemas import Currency, PaymentStatus
 from payments.services.gateway import EmulatedGateway, Gateway
-from tests.support.fakes import FakeGateway
+from tests.support.fakes import FakeGateway, payment_id_with_outcome
 
 KEYS = [f"payment-{i}" for i in range(200)]
 
@@ -23,7 +22,6 @@ def emulated(**overrides: Any) -> EmulatedGateway:
         "success_rate": 0.5,
         "min_delay_s": 0,
         "max_delay_s": 0,
-        "outcome_hints": False,
         "sleep": _no_sleep,
     }
     values.update(overrides)
@@ -68,33 +66,9 @@ async def test_gateway_distribution() -> None:
     assert abs(rate - 0.9) <= 0.005
 
 
-async def test_gateway_hints_respect_flag() -> None:
-    always_ok = emulated(success_rate=1.0, outcome_hints=False)
-    always_ok_hinted = emulated(success_rate=1.0, outcome_hints=True)
-    never_ok_hinted = emulated(success_rate=0.0, outcome_hints=True)
+@pytest.mark.parametrize("outcome", [PaymentStatus.SUCCEEDED, PaymentStatus.FAILED])
+async def test_payment_id_with_outcome_is_deterministic(outcome: PaymentStatus) -> None:
+    first = await payment_id_with_outcome(outcome)
 
-    for key in KEYS[:20]:
-        # Without the flag a hint is ordinary metadata.
-        assert await charge(always_ok, key, emulator_outcome="failed") is PaymentStatus.SUCCEEDED
-        assert await charge(always_ok, key, emulator_outcome="error") is PaymentStatus.SUCCEEDED
-        # With the flag it decides the outcome.
-        assert (
-            await charge(always_ok_hinted, key, emulator_outcome="failed") is PaymentStatus.FAILED
-        )
-        assert (
-            await charge(never_ok_hinted, key, emulator_outcome="succeeded")
-            is PaymentStatus.SUCCEEDED
-        )
-        # An unknown hint is ignored.
-        assert (
-            await charge(never_ok_hinted, key, emulator_outcome="whatever") is PaymentStatus.FAILED
-        )
-
-
-async def test_gateway_error_hint_raises_unavailable() -> None:
-    hinted = emulated(outcome_hints=True)
-    plain = emulated(outcome_hints=False, success_rate=1.0)
-
-    with pytest.raises(GatewayUnavailable):
-        await charge(hinted, "payment-1", emulator_outcome="error")
-    assert await charge(plain, "payment-1", emulator_outcome="error") is PaymentStatus.SUCCEEDED
+    assert first == await payment_id_with_outcome(outcome)
+    assert await charge(emulated(success_rate=0.9), str(first)) is outcome

@@ -40,14 +40,14 @@ from payments.messaging.topology import (
     declare_core,
     declare_retry_ladder,
 )
-from payments.schemas import PaymentEvent
+from payments.schemas import PaymentEvent, PaymentStatus
 from payments.services.gateway import EmulatedGateway
 from payments.services.processing import Processor
 from payments.webhooks.guard import system_resolver
 from payments.webhooks.sender import HttpWebhookSender, create_http_client
 from payments.workers.consumer import ConsumerDeps, create_app, handle_payment_event
 from payments.workers.relay import OutboxRelay
-from tests.support.fakes import make_settings
+from tests.support.fakes import make_settings, payment_id_with_outcome
 from tests.support.receiver import Delivery, Receiver
 from tests.support.tcp_proxy import TcpProxy
 from tests.support.wait import wait_until
@@ -69,7 +69,6 @@ def consumer_settings(database_url: str, rabbitmq_url: str, **overrides: Any) ->
     values: dict[str, Any] = {
         "database_url": database_url,
         "rabbitmq_url": rabbitmq_url,
-        "gateway_outcome_hints": True,
         "webhook_internal_hosts": frozenset({HOOK_HOST}),
         "webhook_total_timeout_s": 2,
         "db_call_timeout_s": 5,
@@ -91,7 +90,6 @@ def worker_env(settings: Settings, **extra: str) -> dict[str, str]:
         "WEBHOOK_INTERNAL_HOSTS": ",".join(sorted(settings.webhook_internal_hosts)),
         "GATEWAY_MIN_DELAY_S": str(settings.gateway_min_delay_s),
         "GATEWAY_MAX_DELAY_S": str(settings.gateway_max_delay_s),
-        "GATEWAY_OUTCOME_HINTS": "true" if settings.gateway_outcome_hints else "false",
         "RETRY_MAX_ATTEMPTS": str(settings.retry_max_attempts),
         "RETRY_BASE_DELAY_MS": str(settings.retry_base_delay_ms),
         "CONSUMER_PREFETCH": str(settings.consumer_prefetch),
@@ -241,9 +239,9 @@ async def insert_outbox_event(sessions: Sessions, payment_id: uuid.UUID) -> uuid
     async with sessions.begin() as session:
         await session.execute(
             text(
-                "INSERT INTO outbox (id, payment_id, event_type, routing_key, payload, headers)"
+                "INSERT INTO outbox (id, payment_id, event_type, routing_key, payload)"
                 " VALUES (:id, :payment_id, 'payment.created', :routing_key,"
-                " CAST(:payload AS jsonb), '{}'::jsonb)"
+                " CAST(:payload AS jsonb))"
             ),
             {
                 "id": event_id,
@@ -493,15 +491,19 @@ class Env:
         self,
         path: str = "/hooks/ok",
         *,
-        outcome: str | None = "succeeded",
+        outcome: PaymentStatus = PaymentStatus.SUCCEEDED,
         **columns: Any,
     ) -> uuid.UUID:
-        """Insert a pending payment whose webhook goes to a receiver path."""
-        metadata = dict(columns.pop("metadata", {}))
-        if outcome is not None:
-            metadata["emulator_outcome"] = outcome
+        """Insert a pending payment whose webhook goes to a receiver path.
+
+        The emulated gateway is a function of the payment id, so the id is picked to give `outcome`.
+        """
+        nth = self.extra[outcome] = self.extra.get(outcome, -1) + 1
+        payment_id = columns.pop("payment_id", None) or await payment_id_with_outcome(
+            outcome, nth=nth
+        )
         return await insert_payment(
-            self.sessions, webhook_url=self.hook(path), metadata=metadata, **columns
+            self.sessions, webhook_url=self.hook(path), payment_id=payment_id, **columns
         )
 
     async def row(self, payment_id: uuid.UUID) -> Row:
@@ -590,7 +592,6 @@ async def running_handler(settings: Settings, *, copies_url: str) -> AsyncIterat
             success_rate=settings.gateway_success_rate,
             min_delay_s=settings.gateway_min_delay_s,
             max_delay_s=settings.gateway_max_delay_s,
-            outcome_hints=settings.gateway_outcome_hints,
         ),
         webhooks=HttpWebhookSender(
             client=http,

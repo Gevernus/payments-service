@@ -11,7 +11,6 @@ from fastapi.security import APIKeyHeader
 from sqlalchemy import text
 
 from payments.api.problem import problem_response
-from payments.db import queries
 from payments.db.session import Db
 from payments.errors import DatabaseUnavailable, IdempotencyKeyInvalid, IdempotencyKeyMissing
 from payments.schemas import PaymentAccepted, PaymentCreate, PaymentOut
@@ -48,15 +47,13 @@ def _check_idempotency_key(value: str | None) -> str:
 @payments_router.post("", status_code=202, response_model=PaymentAccepted)
 async def create_payment(
     payload: PaymentCreate,
-    request: Request,
     response: Response,
     service: Service,
     idempotency_key: Annotated[str | None, Header()] = None,
 ) -> PaymentAccepted:
     """Accept a payment (POST /api/v1/payments)."""
     key = _check_idempotency_key(idempotency_key)
-    request_id: str | None = getattr(request.state, "request_id", None)
-    payment, replayed = await service.create(payload, idempotency_key=key, request_id=request_id)
+    payment, replayed = await service.create(payload, idempotency_key=key)
     response.headers["Location"] = f"/api/v1/payments/{payment.id}"
     response.headers["Idempotent-Replayed"] = "true" if replayed else "false"
     return PaymentAccepted(
@@ -78,16 +75,15 @@ async def live() -> dict[str, str]:
 
 @health_router.get("/health/ready", response_model=None)
 async def ready(request: Request) -> Response:
-    """Readiness probe: the database answers and the outbox backlog is readable."""
+    """Readiness probe: the database answers."""
     db: Db = request.app.state.db
 
-    async def probe(session: Any) -> tuple[int, float | None]:
+    async def probe(session: Any) -> None:
         await session.execute(text("SELECT 1"))
-        return await queries.outbox_backlog(session)
 
     try:
         async with asyncio.timeout(_READY_TIMEOUT_S):
-            backlog, oldest = await db.run(probe)
+            await db.run(probe)
     except (DatabaseUnavailable, TimeoutError):
         return problem_response(503, code="database_unavailable", title="Database is unavailable")
-    return JSONResponse({"status": "ok", "outbox_backlog": backlog, "outbox_oldest_age_s": oldest})
+    return JSONResponse({"status": "ok"})

@@ -2,9 +2,6 @@
 
 from typing import Any
 
-import pytest
-from pydantic import ValidationError
-
 from payments.fingerprint import fingerprint
 from payments.schemas import PaymentCreate
 
@@ -46,36 +43,16 @@ def test_fingerprint_has_version_prefix_and_sha256_digest() -> None:
     int(value.removeprefix("v1:"), 16)
 
 
-def test_fingerprint_number_forms_equal() -> None:
+def test_fingerprint_amount_forms_equal() -> None:
     by_int = fingerprint(make(amount=100))
     by_string = fingerprint(make(amount="100.00"))
     by_float = fingerprint(make(amount=1e2))
     assert by_int == by_string == by_float
 
-    assert fingerprint(make(metadata={"n": 1})) == fingerprint(make(metadata={"n": 1.0}))
-    parsed = PaymentCreate.model_validate_json(
-        b'{"amount":"1","currency":"RUB","webhook_url":"https://example.com/h","metadata":{"n":1.00}}'
-    )
-    plain = PaymentCreate.model_validate_json(
-        b'{"amount":"1","currency":"RUB","webhook_url":"https://example.com/h","metadata":{"n":1}}'
-    )
-    assert fingerprint(parsed) == fingerprint(plain)
 
-
-def test_fingerprint_minus_zero_equals_zero() -> None:
-    assert fingerprint(make(metadata={"n": -0.0})) == fingerprint(make(metadata={"n": 0}))
-    assert fingerprint(make(metadata={"n": 0.0})) == fingerprint(make(metadata={"n": 0}))
-
-
-def test_fingerprint_string_differs_from_number() -> None:
+def test_fingerprint_metadata_is_hashed_as_parsed() -> None:
+    assert fingerprint(make(metadata={"n": 1})) != fingerprint(make(metadata={"n": 1.0}))
     assert fingerprint(make(metadata={"n": "1"})) != fingerprint(make(metadata={"n": 1}))
-
-
-def test_fingerprint_tag_cannot_collide_with_data() -> None:
-    """The number tag starts with NUL, which input strings may not contain."""
-    assert fingerprint(make(metadata={"a": 1}))
-    with pytest.raises(ValidationError):
-        make(metadata={"a": "\u0000num:1"})
 
 
 def test_fingerprint_differs_when_any_field_differs() -> None:
@@ -97,9 +74,9 @@ def test_fingerprint_golden() -> None:
 
     Reference input: amount "100.50", RUB, description "Order 42", metadata
     {"b": [1, 2.5, null, true], "a": {"k": "v"}}, webhook_url https://example.com/hook.
-    Canonical JSON (sorted keys, compact separators, numbers tagged with NUL + "num:"):
+    Canonical JSON (sorted keys, compact separators):
     {"amount":"100.50","currency":"RUB","description":"Order 42","metadata":{"a":{"k":"v"},
-    "b":["\\u0000num:1","\\u0000num:2.5",null,true]},"webhook_url":"https://example.com/hook"}
+    "b":[1,2.5,null,true]},"webhook_url":"https://example.com/hook"}
     """
     payload = make(
         amount="100.50",
@@ -108,5 +85,5 @@ def test_fingerprint_golden() -> None:
     )
     assert (
         fingerprint(payload)
-        == "v1:1b3e0ec0d145332c4c02f3cf5f99a7c468b371774a67b768c645905af7e9a572"
+        == "v1:fa3fb4f62eea7b283057cff9ff67fc1c5f68fc53f215526e577ce492a1e54180"
     )

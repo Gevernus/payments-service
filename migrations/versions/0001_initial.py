@@ -60,7 +60,6 @@ def upgrade() -> None:
           event_type   varchar(64)  NOT NULL,
           routing_key  varchar(255) NOT NULL,
           payload      jsonb        NOT NULL,
-          headers      jsonb        NOT NULL DEFAULT '{}',
           created_at   timestamptz  NOT NULL DEFAULT now(),
           available_at timestamptz  NOT NULL DEFAULT now(),
           attempts     integer      NOT NULL DEFAULT 0 CHECK (attempts >= 0),

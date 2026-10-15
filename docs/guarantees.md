@@ -59,14 +59,14 @@ mechanisms are described in [design.md](design.md); the reasoning behind them in
 | Stale outcome arriving after a replay | the new epoch is unaffected | n/a | `test_stale_outcome_does_not_kill_replay` |
 | Budget exhausted while another chain's attempt is in flight | deferred until that attempt finishes or becomes stale | n/a | `test_exhausted_budget_with_attempt_in_flight_defers` |
 | Non-network database error in the consumer (lock or statement timeout) | deferred, never sent to the DLQ | n/a | `test_db_error_in_consumer_never_dead_letters` |
-| Payment `pending` with its message lost (broker delivery limit, handler bug) | recovered with `replay --stuck-pending` | n/a | `test_replay_stuck_pending` |
+| Payment `pending` with its message lost (broker delivery limit, handler bug) | recovered with `replay stuck` | n/a | `test_replay_stuck_pending` |
 | SIGTERM during processing: shutdown order | the copy publisher closes after in-flight handlers finish | none | `test_copies_closed_after_in_flight_handlers` |
 | Publish connection blocked by the broker | explicit publish timeout; retried until confirmed | copy (on timeout) | `test_publish_timeout_enforced_when_connection_blocked` |
 | Two copies: one delivers, the other dies | `delivered` wins | n/a | `test_delivered_wins_over_dead` |
 | Retry copy is unroutable | `dead_lettered` / `unroutable`, then the DLQ | n/a | `test_unroutable_copy_marks_and_dead_letters` |
 | Publish connection unavailable | the handler waits for the confirm, then publishes the copy | copy (on timeout) | `test_copy_waits_while_publish_connection_down` |
 | Crash after an attempt starts, repeatedly | budget is spent; after 3, `dead_lettered` / `max_attempts`, `last_error = crash_loop` | n/a | `test_crash_loop_spends_budget_and_marks` |
-| Crash before an attempt starts, or messages in the prefetch buffer during a crash | after 10 deliveries the broker moves the message to the DLQ without a database mark; the payment stays `pending` and is recovered with `replay --stuck-pending` | n/a | `test_replay_stuck_pending` covers the recovery. The crash before the CAS itself is not covered by an automated test: the window between delivery and `begin_attempt` cannot be hit deterministically. |
+| Crash before an attempt starts, or messages in the prefetch buffer during a crash | after 10 deliveries the broker moves the message to the DLQ without a database mark; the payment stays `pending` and is recovered with `replay stuck` | n/a | `test_replay_stuck_pending` covers the recovery. The crash before the CAS itself is not covered by an automated test: the window between delivery and `begin_attempt` cannot be hit deterministically. |
 | SIGKILL of the consumer during a webhook | redelivery starts a new attempt; the gateway is not called again | webhook (same `webhook-id`) | `test_consumer_sigkill_during_webhook` |
 | SIGTERM of the consumer | in-flight messages are finished | none | `test_consumer_sigterm_finishes_in_flight` |
 | Broker connection lost | the handler is cancelled; the message is redelivered | possible webhook | `test_broker_connection_drop_redelivers` |
@@ -75,7 +75,7 @@ mechanisms are described in [design.md](design.md); the reasoning behind them in
 | Replay | new budget; delivery goes through the outbox | n/a | `test_replay_reopens_and_delivers` |
 | Retry delays changed between deployments | new retry queues are declared; startup succeeds | n/a | `test_changing_retry_delay_does_not_break_startup` |
 | Crash after a 2xx webhook, before the outcome is recorded | the next attempt POSTs again with the same `webhook-id` | webhook | Not covered by an automated test: the window between the merchant accepting the request and the consumer holding the outcome cannot be closed without a two-phase commit with the merchant. |
-| Broken topology and database failure at the same time | DLQ without a database mark; the payment stays `pending` and is recovered with `replay --stuck-pending` | n/a | Not covered by an automated test: a double failure. |
+| Broken topology and database failure at the same time | DLQ without a database mark; the payment stays `pending` and is recovered with `replay stuck` | n/a | Not covered by an automated test: a double failure. |
 | Queue deleted by an operator | the consumer receives nothing while its health check is green | n/a | Not covered by an automated test: an operator action outside the service's control. |
 | `migrate` fails | the application services do not start | n/a | Not covered by an automated test: a property of the compose dependency on the migration completing successfully. |
 
@@ -117,7 +117,7 @@ Every test name in this file is checked against the test suite by
 - **A one-to-one correspondence between the DLQ and dead payments.** The DLQ may hold
   duplicates, and a message dead-lettered by the broker's delivery limit has no database mark.
 - **Automatic recovery of payments stuck in `pending`.** It requires running
-  `replay --stuck-pending`.
+  `replay stuck`.
 - **Reprocessing of malformed messages.** Messages without a `payment_id` require manual
   inspection of the DLQ.
 

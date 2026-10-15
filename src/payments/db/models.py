@@ -78,7 +78,6 @@ class Outbox(Base):
     event_type: Mapped[str] = mapped_column(String(64))
     routing_key: Mapped[str] = mapped_column(String(255))
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
-    headers: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )

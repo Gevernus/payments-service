@@ -19,7 +19,7 @@ import pytest_asyncio
 from sqlalchemy import text
 
 from payments.db import queries
-from payments.errors import DeadReason
+from payments.errors import DeadReason, GatewayUnavailable
 from payments.messaging.envelope import decode_known
 from payments.messaging.topology import DLQ_NAME, MAIN_QUEUE_NAME
 from payments.schemas import PaymentStatus
@@ -132,11 +132,15 @@ async def test_permanent_goes_to_dlq_after_one_post(env: Env, rabbit: Rabbit) ->
 
 
 async def test_gateway_unavailable_three_times_dead_letters_pending(
-    env: Env, rabbit: Rabbit
+    env: Env, rabbit: Rabbit, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    async def unavailable(*_args: object, **_kwargs: object) -> PaymentStatus:
+        raise GatewayUnavailable("gateway down")
+
     async with env.consumer(env.settings()):
         dlq = await rabbit.dlq()
-        payment_id = await env.new_payment(outcome="error")
+        payment_id = await env.new_payment()
+        monkeypatch.setattr(EmulatedGateway, "charge", unavailable)
 
         await rabbit.publish(payment_id)
         await dlq.wait_for(1)
@@ -574,7 +578,7 @@ async def test_webhook_body_matches_get(env: Env, rabbit: Rabbit, api: httpx.Asy
     for field, value in sent["data"].items():
         assert shown[field] == value, field
     assert sent["data"]["amount"] == "100.00"
-    assert sent["data"]["metadata"] == {"order_id": 42, "emulator_outcome": "succeeded"}
+    assert sent["data"]["metadata"] == {"order_id": 42}
     assert sent["data"]["status"] == "succeeded"
     assert sent["data"]["processed_at"] is not None
 

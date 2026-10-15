@@ -98,7 +98,6 @@ async def handle_payment_event(
             event_id=message_id or str(event.event_id),
         )
         envelope = Envelope.from_headers(headers)
-        bind_contextvars(request_id=envelope.request_id)
         try:
             outcome = await deps.processor.process(event.payment_id, known=envelope.known_outcome)
         except (DatabaseUnavailable, AttemptInFlight) as exc:
@@ -147,7 +146,6 @@ def create_app(settings: Settings | None = None) -> AsgiFastStream:
             success_rate=settings.gateway_success_rate,
             min_delay_s=settings.gateway_min_delay_s,
             max_delay_s=settings.gateway_max_delay_s,
-            outcome_hints=settings.gateway_outcome_hints,
         ),
         webhooks=HttpWebhookSender(
             client=http,

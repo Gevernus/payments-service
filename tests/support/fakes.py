@@ -8,18 +8,50 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_OID, UUID, uuid4, uuid5
 
 from pydantic import SecretStr
 
 from payments.config import Settings
 from payments.db.models import Payment
 from payments.schemas import Currency, DeliveryState, PaymentStatus
+from payments.services.gateway import EmulatedGateway
 from payments.webhooks.sender import Delivered, SendResult
 
 TEST_API_KEY = "test-api-key-0123456789abcdef0123456789"
 TEST_WEBHOOK_KEY = b"0123456789abcdef0123456789abcdef"
 TEST_WEBHOOK_SECRET = "whsec_" + base64.b64encode(TEST_WEBHOOK_KEY).decode()
+
+
+# Bound at import time: tests may patch EmulatedGateway.charge afterwards.
+_EMULATED_CHARGE = EmulatedGateway.charge
+
+
+async def payment_id_with_outcome(
+    outcome: PaymentStatus, *, nth: int = 0, success_rate: float = 0.9
+) -> UUID:
+    """The `nth` id of a fixed sequence that the emulated gateway answers with `outcome`."""
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    gateway = EmulatedGateway(
+        success_rate=success_rate, min_delay_s=0, max_delay_s=0, sleep=no_sleep
+    )
+    for i in range(10_000):
+        candidate = uuid5(NAMESPACE_OID, f"{outcome.value}-{i}")
+        status = await _EMULATED_CHARGE(
+            gateway,
+            idempotency_key=str(candidate),
+            amount=Decimal(1),
+            currency=Currency.RUB,
+            metadata={},
+        )
+        if status is outcome:
+            if nth == 0:
+                return candidate
+            nth -= 1
+    raise RuntimeError(f"no payment id with outcome {outcome.value}")
 
 
 @dataclass(frozen=True)

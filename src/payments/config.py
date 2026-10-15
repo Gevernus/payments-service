@@ -41,7 +41,6 @@ class Settings(BaseSettings):
     gateway_min_delay_s: float = 2
     gateway_max_delay_s: float = 5
     gateway_success_rate: float = 0.9
-    gateway_outcome_hints: bool = False
 
     retry_max_attempts: int = 3
     retry_base_delay_ms: int = 5000

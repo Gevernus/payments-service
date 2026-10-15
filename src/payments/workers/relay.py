@@ -89,7 +89,6 @@ class OutboxRelay:
                     message_id=str(event.id),
                     message_type=event.event_type,
                     correlation_id=str(event.payment_id),
-                    headers=event.headers,
                     timeout=self._settings.rabbit_publish_timeout_s,
                 )
             if not isinstance(result, Basic.Ack):

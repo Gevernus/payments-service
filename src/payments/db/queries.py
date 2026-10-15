@@ -72,9 +72,7 @@ async def get_payment(s: AsyncSession, payment_id: UUID) -> Payment | None:
     return await s.get(Payment, payment_id)
 
 
-async def add_outbox_event(
-    s: AsyncSession, *, payment_id: UUID, event_type: str, request_id: str | None
-) -> None:
+async def add_outbox_event(s: AsyncSession, *, payment_id: UUID, event_type: str) -> None:
     """Add an outbox row for the payment."""
     event_id = uuid4()
     s.add(
@@ -88,7 +86,6 @@ async def add_outbox_event(
                 "payment_id": str(payment_id),
                 "occurred_at": datetime.now(UTC).isoformat(),
             },
-            headers={"x-request-id": request_id} if request_id else {},
         )
     )
     await s.flush()
@@ -102,7 +99,7 @@ _CLAIM = text(
         UPDATE outbox o SET attempts = o.attempts + 1,
                             available_at = now() + make_interval(secs => :lease)
         FROM due WHERE o.id = due.id
-        RETURNING o.id, o.payment_id, o.event_type, o.routing_key, o.payload, o.headers,
+        RETURNING o.id, o.payment_id, o.event_type, o.routing_key, o.payload,
                   o.attempts
         """
 ).bindparams(bindparam("batch", type_=Integer), bindparam("lease", type_=Float))
@@ -110,7 +107,7 @@ _CLAIM = text(
 
 async def claim_outbox(s: AsyncSession, *, batch: int, lease_s: float) -> Sequence[Row[Any]]:
     """Lease up to `batch` due outbox rows (id, payment_id, event_type, routing_key, payload,
-    headers, attempts)."""
+    attempts)."""
     return (await s.execute(_CLAIM, {"batch": batch, "lease": lease_s})).all()
 
 
@@ -137,20 +134,6 @@ async def defer_outbox(
         )
     )
     return int(result.rowcount)  # type: ignore[attr-defined]
-
-
-async def outbox_backlog(s: AsyncSession) -> tuple[int, float | None]:
-    """Return the number of due rows and the age in seconds of the oldest one."""
-    row = (
-        await s.execute(
-            select(
-                func.count(),
-                func.extract("epoch", func.now() - func.min(Outbox.available_at)),
-            ).where(Outbox.available_at <= func.now())
-        )
-    ).one()
-    age = row[1]
-    return int(row[0]), None if age is None else float(age)
 
 
 async def begin_attempt(s: AsyncSession, payment_id: UUID, max_attempts: int) -> Attempt | None:

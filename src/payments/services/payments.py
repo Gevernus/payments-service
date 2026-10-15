@@ -28,9 +28,7 @@ class PaymentService:
         self._db = db
         self._internal_hosts = settings.webhook_internal_hosts
 
-    async def create(
-        self, data: PaymentCreate, *, idempotency_key: str, request_id: str | None
-    ) -> tuple[Payment, bool]:
+    async def create(self, data: PaymentCreate, *, idempotency_key: str) -> tuple[Payment, bool]:
         """Create a payment idempotently; returns (payment, replayed)."""
         try:
             check_url(str(data.webhook_url), self._internal_hosts)
@@ -44,10 +42,7 @@ class PaymentService:
             )
             if created is not None:
                 await queries.add_outbox_event(
-                    session,
-                    payment_id=created.id,
-                    event_type=EVENT_PAYMENT_CREATED,
-                    request_id=request_id,
+                    session, payment_id=created.id, event_type=EVENT_PAYMENT_CREATED
                 )
                 return created, False
             existing = await queries.get_by_idempotency_key(session, idempotency_key)
