@@ -59,6 +59,7 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "A", "C4", "DTZ", "T20", "SIM", "R
 
 [tool.ruff.lint.per-file-ignores]
 "src/payments/errors.py" = ["N818"]  # exception names are part of the module interface
+"tools/loadtest.py" = ["T201", "S311", "S603", "S607"]  # CLI output, test data, docker CLI
 "tests/**" = ["ASYNC109", "S101", "S104", "S105", "S106", "S603", "S607"]
 
 [tool.mypy]

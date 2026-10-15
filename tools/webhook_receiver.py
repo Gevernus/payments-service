@@ -1,7 +1,8 @@
 """Demo and end-to-end webhook receiver (design §11).
 
 Records every POST under /hooks/..., checks its Standard Webhooks signature with the standard
-library and lists the records at GET /received. Paths:
+library and lists the records at GET /received
+(`?compact=1` leaves out headers and body, for load tests). Paths:
 
     /hooks/ok                 200
     /hooks/fail/{n}           503 with Retry-After: 1 for the first n deliveries per webhook-id
@@ -30,6 +31,7 @@ from starlette.routing import Route
 
 _TOLERANCE_S = 300
 _MAX_RECORDS = 10_000
+_COMPACT_FIELDS = ("path", "received_at", "webhook_id", "payment_id", "signature_valid")
 
 _records: deque[dict[str, Any]] = deque(maxlen=_MAX_RECORDS)
 _failures: Counter[str] = Counter()
@@ -110,9 +112,11 @@ async def hook(request: Request) -> Response:
 
 
 async def received(request: Request) -> Response:
-    """List recorded deliveries, optionally for one payment."""
+    """List recorded deliveries, optionally for one payment; `compact=1` omits headers and body."""
     payment_id = request.query_params.get("payment_id")
     items = [r for r in _records if payment_id is None or r["payment_id"] == payment_id]
+    if request.query_params.get("compact") == "1":
+        items = [{k: r[k] for k in _COMPACT_FIELDS} for r in items]
     return JSONResponse(items)
 
 

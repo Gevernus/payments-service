@@ -32,4 +32,4 @@ e2e:
 	docker compose -f compose.yaml -f compose.e2e.yaml down -v; exit $$status
 
 loadtest:
-	uv run python tools/loadtest.py
+	uv run python tools/loadtest.py $(ARGS)
