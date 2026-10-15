@@ -23,8 +23,13 @@ _TESTS_DIR = Path(__file__).resolve().parent
 _MARKED_DIRS = ("unit", "integration", "e2e")
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Mark each test by the directory it lives in."""
+COLLECTED_NAMES = pytest.StashKey[frozenset[str]]()
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Record every collected test name before -k/-m deselection, then mark tests by directory."""
+    config.stash[COLLECTED_NAMES] = frozenset(item.name.split("[")[0] for item in items)
     for item in items:
         relative = Path(str(item.path)).relative_to(_TESTS_DIR)
         area = relative.parts[0] if len(relative.parts) > 1 else None

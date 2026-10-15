@@ -8,6 +8,7 @@ import pytest_asyncio
 
 from payments.config import Settings
 from tests.support.api import api_client
+from tests.support.consumer_harness import env, rabbit  # noqa: F401
 from tests.support.fakes import make_settings
 
 
