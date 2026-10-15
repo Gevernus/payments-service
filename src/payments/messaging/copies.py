@@ -9,7 +9,7 @@ from aiormq.exceptions import PublishError
 from faststream.rabbit import Channel, RabbitBroker
 from pamqp.commands import Basic
 
-from payments.errors import CopyUnroutable
+from payments.errors import CopyUnroutable, NotAcked
 from payments.messaging.topology import RETRY_EXCHANGE
 
 log = structlog.get_logger(__name__)
@@ -17,10 +17,6 @@ log = structlog.get_logger(__name__)
 _PING_TIMEOUT_S = 0.2
 _FIRST_BACKOFF_S = 0.2
 _MAX_BACKOFF_S = 5.0
-
-
-class NotAcked(Exception):  # noqa: N818 - a carrier for "the broker did not confirm"
-    """The broker answered a publish with something other than Basic.Ack."""
 
 
 def _is_unroutable(exc: BaseException) -> bool:

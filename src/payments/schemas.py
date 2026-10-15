@@ -133,7 +133,7 @@ class DeliveryInfo(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    state: DeliveryState
+    state: DeliveryState = Field(validation_alias="delivery_state")
     attempts: int
     last_attempt_at: datetime | None = None
     delivered_at: datetime | None = None
@@ -152,29 +152,12 @@ class PaymentOut(PaymentData):
     @classmethod
     def from_payment(cls, p: "Payment") -> "PaymentOut":
         """Build the response from an ORM row."""
-        reason = p.dead_letter_reason
-        return cls.model_validate(
-            {
-                "payment_id": p.id,
-                "amount": p.amount,
-                "currency": p.currency,
-                "description": p.description,
-                "metadata": p.meta,
-                "status": p.status,
-                "created_at": p.created_at,
-                "processed_at": p.processed_at,
-                "idempotency_key": p.idempotency_key,
-                "webhook_url": p.webhook_url,
-                "delivery": {
-                    "state": p.delivery_state,
-                    "attempts": p.attempts,
-                    "last_attempt_at": p.last_attempt_at,
-                    "delivered_at": p.delivered_at,
-                    "dead_lettered_at": p.dead_lettered_at,
-                    "dead_letter_reason": reason.value if reason is not None else None,
-                    "last_error": p.last_error,
-                },
-            }
+        fields = PaymentData.model_validate(p).model_dump()
+        return cls(
+            **fields,
+            idempotency_key=p.idempotency_key,
+            webhook_url=p.webhook_url,
+            delivery=DeliveryInfo.model_validate(p),
         )
 
 

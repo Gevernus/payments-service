@@ -64,7 +64,7 @@ class PaymentService:
 
     async def get(self, payment_id: UUID) -> Payment:
         """Return the payment or raise PaymentNotFound."""
-        payment = await self._db.run(lambda session: queries.get_payment(session, payment_id))
+        payment = await self._db.run(queries.get_payment, payment_id)
         if payment is None:
             raise PaymentNotFound
         return payment

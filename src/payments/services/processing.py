@@ -79,10 +79,7 @@ class Processor:
         if known is not None:
             return await self._persist(payment_id, known)
 
-        async def begin(session: Any) -> Attempt | None:
-            return await q.begin_attempt(session, payment_id, self._max_attempts)
-
-        attempt = await self._db.run(begin)
+        attempt = await self._db.run(q.begin_attempt, payment_id, self._max_attempts)
         if attempt is None:
             return await self._no_attempt(payment_id)
         try:
@@ -142,18 +139,11 @@ class Processor:
         return await self._db.run(work)
 
     async def _no_attempt(self, payment_id: UUID) -> Outcome:
-        async def exhaust(session: Any) -> bool:
-            return await q.mark_exhausted(
-                session, payment_id, self._max_attempts, self._stale_after_s
-            )
-
-        if await self._db.run(exhaust):
+        if await self._db.run(
+            q.mark_exhausted, payment_id, self._max_attempts, self._stale_after_s
+        ):
             return DeadLetter()
-
-        async def state(session: Any) -> DeliveryState | None:
-            return await q.get_delivery_state(session, payment_id)
-
-        match await self._db.run(state):
+        match await self._db.run(q.get_delivery_state, payment_id):
             case None | DeliveryState.DEAD_LETTERED:
                 return DeadLetter()
             case DeliveryState.DELIVERED:
@@ -168,30 +158,19 @@ class Processor:
                 KnownOutcome("dead", attempt.epoch, DeadReason.MAX_ATTEMPTS, code),
             )
 
-        async def record(session: Any) -> None:
-            await q.record_error(session, attempt.payment.id, epoch=attempt.epoch, code=code)
-
-        await self._db.run(record)
+        await self._db.run(q.record_error, attempt.payment.id, epoch=attempt.epoch, code=code)
         return RetryLater(attempt.attempt_no, code)
 
     async def _persist(self, payment_id: UUID, known: KnownOutcome) -> Outcome:
         try:
             if known.kind == "delivered":
-
-                async def deliver(session: Any) -> None:
-                    await q.mark_delivered(session, payment_id)
-
-                await self._db.run(deliver)
+                await self._db.run(q.mark_delivered, payment_id)
                 return Done()
             assert known.reason is not None  # noqa: S101 - "dead" outcomes always carry a reason
             reason = known.reason
-
-            async def kill(session: Any) -> DeliveryState | None:
-                return await q.mark_dead(
-                    session, payment_id, epoch=known.epoch, reason=reason, code=known.code
-                )
-
-            state = await self._db.run(kill)
+            state = await self._db.run(
+                q.mark_dead, payment_id, epoch=known.epoch, reason=reason, code=known.code
+            )
             # Delivered, or a newer epoch: the outcome is not ours any more.
             return DeadLetter() if state is DeliveryState.DEAD_LETTERED else Done()
         except DatabaseUnavailable as exc:

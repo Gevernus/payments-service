@@ -16,24 +16,8 @@ class DeadReason(StrEnum):
 
 
 # Error codes stored in payments.last_error (design §3.1).
-CRASH_LOOP = "crash_loop"
 UNEXPECTED = "unexpected"
 GATEWAY_UNAVAILABLE = "gateway_unavailable"
-TLS_ERROR = "tls_error"
-CONNECT_ERROR = "connect_error"
-TIMEOUT = "timeout"
-DNS_ERROR = "dns_error"
-REDIRECT = "redirect"
-
-
-def http_code(status: int) -> str:
-    """Error code for an unsuccessful webhook HTTP status."""
-    return f"http_{status}"
-
-
-def blocked(reason: str) -> str:
-    """Error code for a webhook target rejected by the address policy."""
-    return f"blocked:{reason}"
 
 
 class DomainError(Exception):
@@ -114,3 +98,7 @@ class BlockedTarget(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+class NotAcked(Exception):
+    """The broker answered a publish with something other than Basic.Ack."""

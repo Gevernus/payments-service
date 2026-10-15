@@ -21,6 +21,7 @@ from payments.config import Settings, get_settings
 from payments.db import queries
 from payments.db.queries import ClaimedEvent
 from payments.db.session import Db, create_engine, create_session_factory
+from payments.errors import NotAcked
 from payments.logging import configure_logging
 from payments.messaging.topology import PAYMENTS_EXCHANGE, declare_core
 
@@ -53,10 +54,6 @@ def publish_error_code(exc: BaseException) -> str:
     if isinstance(exc, TimeoutError):
         return "publish_timeout"
     return "publish_error"
-
-
-class NotAcked(Exception):  # noqa: N818 - a code carrier, not an error class of the API
-    """The broker answered a publish with something other than Basic.Ack."""
 
 
 class OutboxRelay:
@@ -113,18 +110,14 @@ class OutboxRelay:
 
     async def _defer(self, event: ClaimedEvent, error: str) -> None:
         backoff = row_backoff(event.attempts)
-
-        async def work(session: Any) -> int:
-            return await queries.defer_outbox(
-                session,
+        try:
+            await self._db.run(
+                queries.defer_outbox,
                 event_id=event.id,
                 attempts=event.attempts,
                 backoff_s=backoff,
                 error=error,
             )
-
-        try:
-            await self._db.run(work)
         except Exception as exc:  # noqa: BLE001 - the lease expires and the row is retried
             log.warning("relay.defer_failed", event_id=str(event.id), error=repr(exc))
 
@@ -133,13 +126,9 @@ class OutboxRelay:
         if not await self.connected():
             return 0
         settings = self._settings
-
-        async def claim(session: Any) -> list[ClaimedEvent]:
-            return await queries.claim_outbox(
-                session, batch=settings.outbox_batch_size, lease_s=settings.outbox_lease_s
-            )
-
-        events = await self._db.run(claim)
+        events = await self._db.run(
+            queries.claim_outbox, batch=settings.outbox_batch_size, lease_s=settings.outbox_lease_s
+        )
         if not events:
             return 0
         for event in events:
@@ -153,11 +142,7 @@ class OutboxRelay:
         outcomes = await asyncio.gather(*(self._publish(e) for e in events))
         published = [(e.id, e.attempts) for e, ok in zip(events, outcomes, strict=True) if ok]
         if published:
-
-            async def settle(session: Any) -> int:
-                return await queries.delete_published(session, published)
-
-            await self._db.run(settle)
+            await self._db.run(queries.delete_published, published)
         return len(published)
 
     async def run(self, stop: asyncio.Event) -> None:

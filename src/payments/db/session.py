@@ -4,7 +4,7 @@ import asyncio
 import errno
 import socket
 from collections.abc import Awaitable, Callable
-from typing import TypeVar
+from typing import Concatenate, ParamSpec, TypeVar
 
 import asyncpg  # type: ignore[import-untyped]
 import sqlalchemy.exc
@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import (
 from payments.config import Settings
 from payments.errors import DatabaseUnavailable
 
+P = ParamSpec("P")
 T = TypeVar("T")
 
 _NET_ERRNO = {errno.ENETUNREACH, errno.EHOSTUNREACH, errno.ENETDOWN, errno.EHOSTDOWN}
@@ -75,15 +76,20 @@ class Db:
         self._sessions = sessions
         self._call_timeout_s = call_timeout_s
 
-    async def run(self, fn: Callable[[AsyncSession], Awaitable[T]]) -> T:
-        """Run fn in a transaction under asyncio.timeout.
+    async def run(
+        self,
+        fn: Callable[Concatenate[AsyncSession, P], Awaitable[T]],
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> T:
+        """Run fn(session, *args, **kwargs) in a transaction under asyncio.timeout.
 
         DBAPIError, OSError and timeouts become DatabaseUnavailable; other errors propagate.
         """
         try:
             async with asyncio.timeout(self._call_timeout_s):
                 async with self._sessions() as session, session.begin():
-                    return await fn(session)
+                    return await fn(session, *args, **kwargs)
         except (
             sqlalchemy.exc.DBAPIError,
             sqlalchemy.exc.TimeoutError,
