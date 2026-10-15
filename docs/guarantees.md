@@ -48,8 +48,9 @@ mechanisms are described in [design.md](design.md); the reasoning behind them in
 | Broker unavailable for the relay | no rows are claimed while disconnected | none | `test_relay_waits_while_broker_down` |
 | Topology conflict at startup | the process exits | n/a | `test_relay_startup_fails_on_topology_conflict` |
 | Duplicate message (two chains) | shared budget: at most 3 POSTs, one status transition | webhook (same `webhook-id`) | `test_duplicate_chains_share_attempt_budget`, `test_parallel_duplicates_single_transition` |
-| Webhook returns 5xx or times out | exactly 3 POSTs, then the DLQ; GET shows `dead_lettered` / `max_attempts` | n/a | `test_retry_ladder_exactly_three_posts_then_dlq` |
-| Webhook returns 4xx or 3xx, TLS error, SSRF block | 1 POST, then the DLQ; reason `permanent` | n/a | `test_permanent_goes_to_dlq_after_one_post`, `test_webhook_pinned_tls_delivery` |
+| Webhook returns 5xx or times out | exactly 3 POSTs, then the DLQ; GET shows `dead_lettered` / `max_attempts` | n/a | `test_retry_ladder_exactly_three_posts_then_dlq`, `test_webhook_timeout_follows_the_retry_ladder` |
+| Webhook returns 4xx or 3xx | 1 POST, then the DLQ; reason `permanent` | n/a | `test_permanent_goes_to_dlq_after_one_post` |
+| TLS error, or SSRF block at send time (the resolved address is not public) | no POST is made; the DLQ; reason `permanent` | n/a | `test_webhook_wrong_certificate_is_permanent_tls_error`, `test_sender_blocks_non_public_targets_without_sending`, `test_permanent_is_dead_letter` |
 | Gateway technical failure three times | DLQ; the payment stays `pending` with `delivery_state = dead_lettered` | n/a | `test_gateway_unavailable_three_times_dead_letters_pending` |
 | Database unavailable in the consumer (including a silent connection) | the client deadline fires; the message is deferred; no attempt is spent | n/a | `test_db_outage_defers_without_spending_attempt` |
 | Database fails after a 2xx webhook | the outcome travels in the deferred message and is written later; the POST is not repeated | none | `test_db_down_after_delivery_persists_without_resend` |
@@ -94,7 +95,7 @@ mechanisms are described in [design.md](design.md); the reasoning behind them in
 | A gateway decline is final and notified | `test_e2e_gateway_decline_is_final` |
 | A flaky webhook endpoint is eventually delivered to | `test_e2e_webhook_flaky_then_delivered` |
 | A failing webhook endpoint exhausts retries and ends in the DLQ | `test_e2e_webhook_retry_exhausted_to_dlq` |
-| An internal host is rejected as a webhook target | `test_e2e_ssrf_internal_host_rejected` |
+| An internal host name is rejected with 422 at create time on the compose stack; the send-time check is covered by `test_sender_blocks_non_public_targets_without_sending` | `test_e2e_ssrf_internal_host_rejected` |
 | The replay CLI on the compose stack | `test_e2e_replay_cli` |
 
 Every test name in this file is checked against the test suite by

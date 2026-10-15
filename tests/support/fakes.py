@@ -28,9 +28,12 @@ _EMULATED_CHARGE = EmulatedGateway.charge
 
 
 async def idempotency_key_with_outcome(
-    outcome: PaymentStatus, *, nth: int = 0, success_rate: float = 0.9
+    outcome: PaymentStatus, *, nth: int = 0, success_rate: float = 0.9, prefix: str = ""
 ) -> str:
-    """The `nth` key of a fixed sequence that the emulated gateway answers with `outcome`."""
+    """The `nth` key of a fixed sequence that the emulated gateway answers with `outcome`.
+
+    `prefix` starts every candidate, so callers can draw keys that other callers do not share.
+    """
 
     async def no_sleep(_: float) -> None:
         return None
@@ -39,7 +42,7 @@ async def idempotency_key_with_outcome(
         success_rate=success_rate, min_delay_s=0, max_delay_s=0, sleep=no_sleep
     )
     for i in range(10_000):
-        candidate = f"{outcome.value}-{i}"
+        candidate = f"{prefix}{outcome.value}-{i}"
         status = await _EMULATED_CHARGE(
             gateway,
             idempotency_key=candidate,

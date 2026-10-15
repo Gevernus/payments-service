@@ -100,6 +100,25 @@ async def test_retry_ladder_exactly_three_posts_then_dlq(
     assert info["status"] == "succeeded"
 
 
+async def test_webhook_timeout_follows_the_retry_ladder(
+    env: Env, rabbit: Rabbit, api: httpx.AsyncClient
+) -> None:
+    # The endpoint answers after 2 s, the total webhook timeout is 0.5 s: every attempt times out.
+    async with env.consumer(env.settings(webhook_total_timeout_s=0.5)):
+        dlq = await rabbit.dlq()
+        payment_id = await env.new_payment("/hooks/slow/2")
+
+        await rabbit.publish(payment_id)
+        await dlq.wait_for(1)
+
+    assert len(env.posts(payment_id)) == 3
+    info = await get_delivery(api, payment_id)
+    assert info["delivery"]["state"] == "dead_lettered"
+    assert info["delivery"]["dead_letter_reason"] == "max_attempts"
+    assert info["delivery"]["last_error"] == "timeout"
+    assert info["delivery"]["attempts"] == 3
+
+
 async def test_duplicate_chains_share_attempt_budget(env: Env, rabbit: Rabbit) -> None:
     async with env.consumer(env.settings()):
         dlq = await rabbit.dlq()
