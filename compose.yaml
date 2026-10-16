@@ -16,6 +16,11 @@ x-app: &app
     WEBHOOK_SECRET: ${WEBHOOK_SECRET:-whsec_ZGV2LW9ubHktd2ViaG9vay1zaWduaW5nLWtleS0wMTI=}
     WEBHOOK_INTERNAL_HOSTS: ${WEBHOOK_INTERNAL_HOSTS:-webhook-receiver,host.docker.internal}
     CONSUMER_PREFETCH: ${CONSUMER_PREFETCH:-10}
+    GATEWAY_MIN_DELAY_S: ${GATEWAY_MIN_DELAY_S:-2}
+    GATEWAY_MAX_DELAY_S: ${GATEWAY_MAX_DELAY_S:-5}
+    GATEWAY_SUCCESS_RATE: ${GATEWAY_SUCCESS_RATE:-0.9}
+    RETRY_MAX_ATTEMPTS: ${RETRY_MAX_ATTEMPTS:-3}
+    RETRY_BASE_DELAY_MS: ${RETRY_BASE_DELAY_MS:-5000}
   depends_on:
     migrate:
       condition: service_completed_successfully

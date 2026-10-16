@@ -712,7 +712,7 @@ accessors in the processes that need them. The loaded settings (without secrets)
 | `RABBIT_PUBLISH_TIMEOUT_S` | 5 | relay, consumer |
 | `OUTBOX_POLL_INTERVAL_S`, `OUTBOX_BATCH_SIZE`, `OUTBOX_LEASE_S` | 0.5, 100, 30 | relay |
 | `GATEWAY_MIN_DELAY_S`, `GATEWAY_MAX_DELAY_S`, `GATEWAY_SUCCESS_RATE` | 2, 5, 0.9 | consumer |
-| `RETRY_MAX_ATTEMPTS`, `RETRY_BASE_DELAY_MS` | 3, 5000 | consumer, cli |
+| `RETRY_MAX_ATTEMPTS`, `RETRY_BASE_DELAY_MS` | 3, 5000 | consumer |
 | `CONSUMER_PREFETCH`, `WEBHOOK_TOTAL_TIMEOUT_S` | 10, 15 | consumer |
 
 Validators: `GATEWAY_MIN_DELAY_S <= GATEWAY_MAX_DELAY_S`; `RETRY_MAX_ATTEMPTS >= 2`;

@@ -235,7 +235,7 @@ Load test results (intake, end-to-end latency, broker outage) are in [docs/load-
 | consumer, receiver | `WEBHOOK_SECRET` | required | `whsec_` + base64 key (Standard Webhooks) |
 | api, consumer | `WEBHOOK_INTERNAL_HOSTS` | empty | host names allowed to resolve to private addresses; demo only |
 | consumer | `GATEWAY_MIN_DELAY_S`, `GATEWAY_MAX_DELAY_S`, `GATEWAY_SUCCESS_RATE` | 2, 5, 0.9 | the emulation |
-| consumer, cli | `RETRY_MAX_ATTEMPTS`, `RETRY_BASE_DELAY_MS` | 3, 5000 | 3 is the assignment's budget; a new delay declares new retry queues and leaves the old ones |
+| consumer | `RETRY_MAX_ATTEMPTS`, `RETRY_BASE_DELAY_MS` | 3, 5000 | 3 is the assignment's budget; a new delay declares new retry queues and leaves the old ones |
 
 All variables are in `src/payments/config.py` and design §9; compose sets development values for all of them.
 Queue arguments (`x-dead-letter-*`, `x-delivery-limit`, `x-overflow`) are constants in `src/payments/messaging/topology.py`;
