@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Concatenate, ParamSpec, TypeVar
 
+import asyncpg
 import sqlalchemy.exc
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -59,6 +60,8 @@ class Db:
         """Run fn(session, *args, **kwargs) in a transaction under asyncio.timeout.
 
         DBAPIError, OSError and timeouts become DatabaseUnavailable; other errors propagate.
+        asyncpg errors are listed too: while PostgreSQL starts or shuts down, the driver raises
+        them unwrapped (e.g. CannotConnectNowError) when a connection is opened.
         """
         try:
             async with asyncio.timeout(self._call_timeout_s):
@@ -67,6 +70,8 @@ class Db:
         except (
             sqlalchemy.exc.DBAPIError,
             sqlalchemy.exc.TimeoutError,
+            asyncpg.PostgresError,
+            asyncpg.InterfaceError,
             OSError,
             TimeoutError,
         ) as exc:
