@@ -206,7 +206,7 @@ copy published twice). The gateway call takes 2 to 5 seconds and must not run in
 transaction.
 
 **Decision.** There is no processing lock or lease on the payment. The gateway is called with
-`idempotency_key = payment_id`, and its contract states that one key yields one outcome and a
+the payment's `Idempotency-Key` (unique per payment), and its contract states that one key yields one outcome and a
 repeat is safe. The status is written with a CAS `finalize` (`WHERE status = 'pending'`), so only
 one chain changes it; a later pass that finds a final status skips the gateway and only sends
 the webhook (section 7.1, 8.1).

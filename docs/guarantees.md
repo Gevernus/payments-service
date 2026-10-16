@@ -13,7 +13,7 @@ mechanisms are described in [design.md](design.md); the reasoning behind them in
 |---|---|---|
 | Client to API to PostgreSQL | Exactly-once effect per `Idempotency-Key` | Unique constraint and `INSERT ... ON CONFLICT DO NOTHING`; the payment and its outbox event commit in one transaction before the 202 is sent. A repeat with the same body returns the original payment; a different body returns 422. A client may safely retry after a timeout or a 503. |
 | PostgreSQL to broker (relay) | At least once | Leased claims committed before publishing; publisher confirms and `mandatory`; the row is deleted only after `Basic.Ack`, fenced by `(id, attempts)`. A duplicate publish carries the same `message_id`. |
-| Broker to consumer | At-least-once delivery, effectively-once effects | The status changes once (CAS `finalize`); the gateway is idempotent by `payment_id`; every attempt starts with the CAS `begin_attempt` under a budget of 3 per epoch; the delivery state changes only through CAS transitions. |
+| Broker to consumer | At-least-once delivery, effectively-once effects | The status changes once (CAS `finalize`); the gateway is idempotent by the payment's `Idempotency-Key`; every attempt starts with the CAS `begin_attempt` under a budget of 3 per epoch; the delivery state changes only through CAS transitions. |
 | Consumer to merchant | At least once, at most 3 POSTs per payment per epoch | Retries for transient failures; the merchant deduplicates by `webhook-id`, which is the same for every attempt and every duplicate chain of a payment's final status. Each attempt is signed again with its own `webhook-timestamp`. |
 
 ---
@@ -51,7 +51,7 @@ mechanisms are described in [design.md](design.md); the reasoning behind them in
 | Webhook returns 5xx or times out | exactly 3 POSTs, then the DLQ; GET shows `dead_lettered` / `max_attempts` | n/a | `test_retry_ladder_exactly_three_posts_then_dlq`, `test_webhook_timeout_follows_the_retry_ladder` |
 | Webhook returns 4xx or 3xx | 1 POST, then the DLQ; reason `permanent` | n/a | `test_permanent_goes_to_dlq_after_one_post` |
 | TLS error, or SSRF block at send time (the resolved address is not public) | no POST is made; the DLQ; reason `permanent` | n/a | `test_webhook_wrong_certificate_is_permanent_tls_error`, `test_sender_blocks_non_public_targets_without_sending`, `test_permanent_is_dead_letter` |
-| Gateway technical failure three times | DLQ; the payment stays `pending` with `delivery_state = dead_lettered` | n/a | `test_gateway_unavailable_three_times_dead_letters_pending` |
+| Gateway technical failure three times (the emulator never produces one; the branch exists for a real provider and is tested with a fake gateway) | DLQ; the payment stays `pending` with `delivery_state = dead_lettered` | n/a | `test_gateway_unavailable_three_times_dead_letters_pending` |
 | Database unavailable in the consumer (including a silent connection) | the client deadline fires; the message is deferred; no attempt is spent | n/a | `test_db_outage_defers_without_spending_attempt` |
 | Database fails after a 2xx webhook | the outcome travels in the deferred message and is written later; the POST is not repeated | none | `test_db_down_after_delivery_persists_without_resend` |
 | Database fails while marking the payment dead | the outcome is deferred, written later, then the message goes to the DLQ | n/a | `test_db_down_at_dead_letter_marks_later` |

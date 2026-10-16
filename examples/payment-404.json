@@ -1,0 +1,7 @@
+{
+  "amount": "10.00",
+  "currency": "EUR",
+  "description": "Order 1044",
+  "metadata": {"order_id": "1044"},
+  "webhook_url": "http://webhook-receiver:9000/hooks/status/404"
+}

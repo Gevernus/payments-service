@@ -61,7 +61,7 @@ taken and the reason.
 | `consumer` | `uvicorn payments.workers.consumer:create_app --factory` (AsgiFastStream) | `payments.new` to processing, retry and DLQ |
 | `migrate` | `alembic upgrade head` | schema, one-shot |
 | `webhook-receiver` | `uvicorn --app-dir tools webhook_receiver:app` | demo and end-to-end receiver |
-| CLI | `python -m payments.cli replay dead [--reason R] [--payment-id ID] [--limit N]` | return dead payments to processing |
+| CLI | `python -m payments.cli replay dead [--reason R] [--payment-id ID] [--limit N] [--dry-run]`, `replay stuck --older-than T` | return dead or stuck payments to processing |
 
 Every process runs `SELECT 1` at startup, and the relay and consumer also connect to the
 broker. A configuration error kills the process instead of turning into an endless wait for
@@ -110,7 +110,7 @@ src/payments/
   money.py
   schemas.py           PaymentCreate, PaymentAccepted, PaymentData, PaymentOut(PaymentData), PaymentEvent
   fingerprint.py
-  errors.py            domain errors, problem+json, ErrorCode, DeadReason
+  errors.py            domain errors, error codes, DeadReason
   db/
     models.py
     session.py         engine, sessionmaker, db_call()
@@ -331,8 +331,8 @@ Response: `202 {"payment_id", "status", "created_at"}` with `Location` and
 }
 ```
 
-`last_error` is an `ErrorCode` value: `http_<code>`, `connect_error`, `timeout`, `dns_error`,
-`tls_error`, `blocked:<reason>`, `redirect`, `gateway_unavailable`, `unexpected`, `crash_loop`.
+`last_error` holds a short code: `http_<code>`, `connect_error`, `timeout`, `dns_error`,
+`transport_error`, `tls_error`, `blocked:<reason>`, `redirect`, `gateway_unavailable`, `unexpected`, `crash_loop`.
 Exception class names appear only in logs.
 
 ### 4.5 Health
@@ -435,9 +435,9 @@ class KnownOutcome:              # the network result is known; only the databas
     kind: Literal["delivered", "dead"]
     epoch: int                   # attempts_base in which the outcome was obtained
     reason: DeadReason | None = None
-    code: ErrorCode | None = None
+    code: str | None = None
 
-Outcome = Done | RetryLater(attempt_no) | DeadLetter
+Outcome = Done | RetryLater(attempt_no, code) | DeadLetter
 
 class Processor:
     async def process(self, payment_id: UUID, *, known: KnownOutcome | None = None) -> Outcome:
@@ -640,8 +640,9 @@ class Gateway(Protocol):
 `EmulatedGateway` seeds `random.Random` with `sha256(key)`, so the outcome and the delay
 (`uniform(min, max)`) are functions of the key. The key is the payment's `Idempotency-Key`, so
 one key gives one outcome, and a demo can pick a decline deterministically through the HTTP API
-by choosing the key. The emulator logs `gateway.charge_started`. A contract test runs against
-both the emulated gateway and the test fake.
+by choosing the key. The emulator logs `gateway.charge_started`. It never raises
+`GatewayUnavailable`: that branch exists for a real provider and is covered by tests with a fake
+gateway. A contract test runs against both the emulated gateway and the test fake.
 
 ### 8.2 Webhook contract (Standard Webhooks)
 
