@@ -62,7 +62,7 @@ mechanisms are described in [design.md](design.md); the reasoning behind them in
 | Non-network database error in the consumer (lock or statement timeout) | deferred, never sent to the DLQ | n/a | `test_db_error_in_consumer_never_dead_letters` |
 | Payment `pending` with its message lost (broker delivery limit, handler bug) | recovered with `replay stuck` | n/a | `test_replay_stuck_pending` |
 | SIGTERM during processing: shutdown order | the copy publisher closes after in-flight handlers finish | none | `test_copies_closed_after_in_flight_handlers` |
-| Publish connection blocked by the broker | explicit publish timeout; retried until confirmed | copy (on timeout) | `test_publish_timeout_enforced_when_connection_blocked` |
+| Publish connection blocked by the broker | explicit publish timeout; retried until confirmed | copy (on timeout) | `test_publish_timeout_enforced_when_connection_blocked` (relay), `test_copy_waits_while_publish_connection_down` (copy publisher) |
 | Two copies: one delivers, the other dies | `delivered` wins | n/a | `test_delivered_wins_over_dead` |
 | Retry copy is unroutable | `dead_lettered` / `unroutable`, then the DLQ | n/a | `test_unroutable_copy_marks_and_dead_letters` |
 | Publish connection unavailable | the handler waits for the confirm, then publishes the copy | copy (on timeout) | `test_copy_waits_while_publish_connection_down` |

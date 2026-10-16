@@ -182,7 +182,7 @@ A `pending` payment whose message hit the broker's delivery limit is recovered w
 a processing failure spends attempts and can send a healthy payment to the DLQ while the
 database cannot even record that.
 
-**Decision.** `db_call()` wraps every query in a short transaction under
+**Decision.** `Db.run` wraps every query in a short transaction under
 `asyncio.timeout(DB_CALL_TIMEOUT_S)` and converts any driver or connection error into
 `DatabaseUnavailable`. The handler then publishes a deferred copy with the `delays[0]` delay. If
 the network outcome is already known (a webhook returned 2xx), the copy carries it in
@@ -249,8 +249,9 @@ publishing also need a place to run.
 
 **Decision.** Separate processes: `api`, `relay`, `consumer`, a one-shot `migrate`, and a
 `webhook-receiver` for the demo and end-to-end tests. The relay and the consumer run as
-AsgiFastStream applications under uvicorn, which gives them health endpoints. Every process
-checks the database (and the broker, where used) at startup and exits on configuration errors.
+AsgiFastStream applications under uvicorn, which gives them health endpoints. The relay and the
+consumer check the database and the broker at startup and exit on configuration errors, and the
+CLI exits with an error if the database is unreachable; the API relies on its readiness probe.
 `compose.yaml` runs without a `.env` file (section 2.1, 11).
 
 **Alternatives considered.** Running the relay as a background task inside the API (its

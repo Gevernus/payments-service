@@ -2,7 +2,8 @@
 
 Stand: one disposable VPS (2 vCPU AMD EPYC-Rome, 1.9 GiB RAM, no swap), the whole compose stack and
 the load generator on the same host. Every result below comes from the JSON files of one run each
-(condensed in `docs/load-testing/summary.json`); repeated runs differ by 10 to 30%.
+(condensed in `docs/load-testing/summary.json`); repeated runs differ by 10 to 30%. The raw
+result files (`loadtest-results/`) are not in the repository; `docs/load-testing/summary.json` condenses them.
 
 - **Nothing was lost.** Every accepted payment ended `delivered`; none was `pending`, `dead_lettered` or
   missing after a drain, and the DLQ stayed empty. No payment received more than 2 POSTs (limit 3).

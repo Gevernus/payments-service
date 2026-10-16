@@ -1,6 +1,6 @@
 # Payment processing service: design specification
 
-This document was written before the implementation. It describes what the service does, how
+This document was written before the implementation and kept in step with it. It describes what the service does, how
 each requirement of the assignment is interpreted, and which mechanisms provide the delivery
 guarantees. Design decisions with their alternatives are in [decisions.md](decisions.md); the
 per-failure behaviour and the tests that verify it are in [guarantees.md](guarantees.md).
@@ -63,9 +63,10 @@ taken and the reason.
 | `webhook-receiver` | `uvicorn --app-dir tools webhook_receiver:app` | demo and end-to-end receiver |
 | CLI | `python -m payments.cli replay dead [--reason R] [--payment-id ID] [--limit N] [--dry-run]`, `replay stuck --older-than T` | return dead or stuck payments to processing |
 
-Every process runs `SELECT 1` at startup, and the relay and consumer also connect to the
-broker. A configuration error kills the process instead of turning into an endless wait for
-the database.
+The relay and the consumer run `SELECT 1` and connect to the broker at startup, and the CLI
+makes a single attempt and exits with an error if the database is unreachable. The API has no
+startup probe; it relies on its readiness probe (section 4.5). A configuration error kills a
+worker instead of turning into an endless wait for the database.
 
 ### 2.2 Flow
 
@@ -113,7 +114,7 @@ src/payments/
   errors.py            domain errors, error codes, DeadReason
   db/
     models.py
-    session.py         engine, sessionmaker, db_call()
+    session.py         engine, sessionmaker, Db.run
     queries.py         all SQL that the guarantees depend on
   services/
     payments.py        create, get
@@ -503,7 +504,7 @@ Properties:
   moved out of the DLQ) cannot kill a replay: `mark_dead` and `record_error` are fenced by
   `attempts_base`.
 - **"Delivered wins"** in any epoch.
-- **A database error in the consumer never leads to the DLQ.** `db_call()` converts any driver
+- **A database error in the consumer never leads to the DLQ.** `Db.run` converts any driver
   or connection error (`DBAPIError`, `OSError`, `TimeoutError`, `sqlalchemy.exc.TimeoutError`)
   into `DatabaseUnavailable`. The handler defers the message, carrying the `KnownOutcome` if the
   outcome is already known. Every deferral is logged at WARNING with the `x-deferrals` count.
@@ -512,7 +513,7 @@ Properties:
 - **The gateway is called outside a transaction.** A parallel duplicate calls it with the same
   key, receives the same outcome, and only one `finalize` CAS wins (gateway contract, 8.1).
 
-`db_call()`: every `q.*` call is a short transaction under `asyncio.timeout(DB_CALL_TIMEOUT_S)`.
+`Db.run`: every `q.*` call is a short transaction under `asyncio.timeout(DB_CALL_TIMEOUT_S)`.
 Engine: `connect_args={"timeout": 3, "command_timeout": 5, "server_settings":
 {"statement_timeout": "4000", "lock_timeout": "2000", "idle_in_transaction_session_timeout":
 "10000"}}`, `pool_pre_ping=True`.
@@ -727,12 +728,17 @@ structlog, JSON in compose. Context variables: `payment_id` and `event_id` in th
 every line of one payment's processing can be found by the payment id (also the
 `correlation_id` of the message).
 
-Events: `payment.created`, `payment.replayed`, `payment.idempotency_conflict`,
-`outbox.published`, `outbox.publish_failed`, `gateway.charge_started`,
-`payment.attempt_started` (with `attempt_no`), `payment.processed`,
-`payment.duplicate_message`, `webhook.delivered`, `webhook.failed`,
-`message.retry_scheduled`, `message.deferred`, `message.dead_lettered`,
-`copy.publish_retrying`.
+Events by process:
+
+- API: `settings.loaded`, `request.failed`, `db.unavailable`.
+- CLI: `payment.replayed`.
+- Relay: `settings.loaded`, `relay.started`, `relay.publish_failed`, `relay.defer_failed`,
+  `relay.row_stuck`, `relay.iteration_failed`.
+- Consumer: `settings.loaded`, `consumer.started`, `gateway.charge_started`,
+  `payment.processed` (`outcome` done, retry or dead_letter, with `attempt` and `code` on a
+  retry), `payment.processing_failed`, `consumer.deferred`, `consumer.copy_unroutable`,
+  `copy.publish_failed`, `copy.close_failed`, `envelope.invalid_known_outcome`,
+  `webhook.response`, `webhook.blocked`, `webhook.dns_error`, `webhook.transport_error`.
 
 ---
 
@@ -836,6 +842,9 @@ The CI job brings the stack up without a `.env` file.
 - A status badge in the README. The same steps run locally through `make ci`.
 
 ### 12.5 Load testing plan
+
+The executed plan differs: intake was measured with k6 at 50, 100, 150, 200 and 400 requests
+per second for 45 s each; see [load-testing.md](load-testing.md) for what was run.
 
 Tool: `tools/loadtest.py` (asyncio and httpx), generating an open-model load at a constant
 rate. Results are written as JSON and summarised in `docs/load-testing.md` together with the
