@@ -1,6 +1,6 @@
 """The outbox relay publishes every row at least once, never loses one, and fences stale writes.
 
-Runs against real PostgreSQL and RabbitMQ (design §5, §6; failure matrix in docs/guarantees.md).
+Runs against real PostgreSQL and RabbitMQ (failure matrix in docs/guarantees.md).
 Faults are injected with TCP proxies in front of either service, and with a RabbitMQ memory alarm
 for the blocked-connection case.
 """

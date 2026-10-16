@@ -1,4 +1,4 @@
-"""Amount parsing: strings or JSON numbers into two-place decimals (design §4.3)."""
+"""Amount parsing: strings or JSON numbers into two-place decimals."""
 
 from decimal import Decimal
 

@@ -1,4 +1,4 @@
-"""RabbitMQ exchanges and queues (design §6)."""
+"""RabbitMQ exchanges and queues."""
 
 from collections.abc import Sequence
 

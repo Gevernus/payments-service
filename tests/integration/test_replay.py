@@ -1,4 +1,4 @@
-"""Replay: the CLI reopens dead payments and recovers stuck ones via the outbox (design §7.4)."""
+"""Replay: the CLI reopens dead payments and recovers stuck ones via the outbox."""
 
 from payments.db.session import Db
 from payments.services.replay import replay_dead, replay_stuck_pending

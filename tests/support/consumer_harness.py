@@ -223,7 +223,7 @@ async def insert_payment(
 
 
 async def payment_row(sessions: Sessions, payment_id: uuid.UUID) -> Row:
-    """The payment row as a dict (columns of design §3.1)."""
+    """The payment row as a dict."""
     async with sessions() as session:
         result = await session.execute(
             text("SELECT * FROM payments WHERE id = :id"), {"id": payment_id}

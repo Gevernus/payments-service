@@ -1,4 +1,4 @@
-"""The processor state machine on fakes, with a real database (design §3.1, §7.1).
+"""The processor state machine on fakes, with a real database.
 
 Every test drives `Processor.process` and checks the returned outcome, the payment row and what
 the gateway and the webhook sender were asked to do.

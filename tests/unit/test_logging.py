@@ -1,4 +1,4 @@
-"""Logging setup: JSON output and context variables (design §10)."""
+"""Logging setup: JSON output and context variables."""
 
 import json
 import logging

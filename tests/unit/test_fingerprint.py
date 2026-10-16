@@ -1,4 +1,4 @@
-"""Request fingerprint used to detect idempotency-key reuse (design §4.3)."""
+"""Request fingerprint used to detect idempotency-key reuse."""
 
 from typing import Any
 

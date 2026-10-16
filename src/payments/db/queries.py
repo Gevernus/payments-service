@@ -1,4 +1,4 @@
-"""All SQL that carries the delivery guarantees (design §3.1, §4.3, §5)."""
+"""All SQL that carries the delivery guarantees (the transition table is design §3.2)."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass

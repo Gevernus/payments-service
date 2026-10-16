@@ -1,4 +1,4 @@
-"""Address policy for webhook targets (SSRF guard, design §8.4)."""
+"""Address policy for webhook targets (SSRF guard)."""
 
 import asyncio
 import socket

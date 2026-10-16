@@ -1,4 +1,4 @@
-"""Backoff formulas and stored error codes of the relay (design §5, §7.1)."""
+"""Backoff formulas and stored error codes of the relay."""
 
 from types import SimpleNamespace
 

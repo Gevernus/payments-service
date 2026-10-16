@@ -1,4 +1,4 @@
-"""Webhook delivery: classification, transport errors, address pinning and signing (design §8.3)."""
+"""Webhook delivery: classification, transport errors, address pinning and signing."""
 
 import asyncio
 import socket

@@ -1,4 +1,4 @@
-"""Pinned TLS delivery against a local TLS server (design §8.3).
+"""Pinned TLS delivery against a local TLS server.
 
 The sender connects to the resolved address, but the Host header, the SNI name and the
 certificate check all use the merchant's host name.

@@ -1,4 +1,4 @@
-"""Address policy for webhook targets (design §8.4).
+"""Address policy for webhook targets.
 
 The `is_public` table assumes Python 3.13 `ipaddress` semantics (`is_global`, special-use
 registries as of 3.13); the guard adds its own blocks on top for ranges the stdlib treats as global.

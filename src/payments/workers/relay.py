@@ -1,4 +1,4 @@
-"""Outbox relay process (design §5)."""
+"""Outbox relay process."""
 
 import asyncio
 import contextlib

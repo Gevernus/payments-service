@@ -1,4 +1,4 @@
-"""The payment gateway contract, its emulation (design §8.1)."""
+"""The payment gateway contract and its emulation."""
 
 from collections.abc import Callable
 from decimal import Decimal

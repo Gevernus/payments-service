@@ -1,4 +1,4 @@
-"""The names, delays and arguments of the RabbitMQ topology (design §6)."""
+"""The names, delays and arguments of the RabbitMQ topology."""
 
 from payments.messaging.topology import (
     DEAD_LETTER_QUEUE,

@@ -1,4 +1,4 @@
-"""The message headers carried between deliveries (design §7.3)."""
+"""The message headers carried between deliveries."""
 
 from typing import Any
 

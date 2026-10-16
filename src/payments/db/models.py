@@ -1,4 +1,4 @@
-"""Declarative mapping of the `payments` and `outbox` tables (design §3).
+"""Declarative mapping of the `payments` and `outbox` tables.
 
 CHECK constraints and the index live only in the migration.
 """

@@ -1,4 +1,4 @@
-"""Request and response schemas (design §4.3, §4.4)."""
+"""Request and response schemas."""
 
 import json
 from datetime import UTC, datetime

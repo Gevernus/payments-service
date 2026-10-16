@@ -1,4 +1,4 @@
-"""HTTP API behaviour against a migrated database (design §4)."""
+"""HTTP API behaviour against a migrated database."""
 
 import uuid
 from typing import Any

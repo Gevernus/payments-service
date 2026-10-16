@@ -19,7 +19,7 @@ def mask_url_password(url: str) -> str:
 
 
 class Settings(BaseSettings):
-    """Environment-driven configuration (design §9)."""
+    """Environment-driven configuration."""
 
     model_config = SettingsConfigDict(extra="ignore")
 

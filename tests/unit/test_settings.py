@@ -1,4 +1,4 @@
-"""Settings validators and key accessors (design §7.5, §9)."""
+"""Settings validators and key accessors."""
 
 import base64
 from typing import Any

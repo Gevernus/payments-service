@@ -1,4 +1,4 @@
-"""Replay of dead-lettered and stuck payments (CLI backend, design §7.4).
+"""Replay of dead-lettered and stuck payments (CLI backend).
 
 Replay never publishes: it writes an outbox row in the same transaction as the state change,
 and the relay carries the event to the consumer. Running it again is safe: `reopen` is a

@@ -1,4 +1,4 @@
-"""Standard Webhooks signing (design §8.2)."""
+"""Standard Webhooks signing."""
 
 import json
 import time

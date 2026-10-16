@@ -1,4 +1,4 @@
-"""The migration, the models and the constraints of design §3.1 and §3.2 agree."""
+"""The migration, the models and the constraints agree."""
 
 import asyncio
 from datetime import UTC, datetime

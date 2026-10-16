@@ -1,7 +1,7 @@
 """The consumer runs the payment state machine under retries, duplicates and failures.
 
 Runs the real consumer application against PostgreSQL, RabbitMQ and an in-process webhook
-receiver (design §6, §7; failure matrix in docs/guarantees.md). Webhook outcomes come from
+receiver (failure matrix in docs/guarantees.md). Webhook outcomes come from
 receiver paths, gateway outcomes from the idempotency key, which seeds the emulator. Faults are
 injected with TCP proxies in front of PostgreSQL or RabbitMQ, and by replacing a single `queries`
 function or collaborator method in the consumer's process.

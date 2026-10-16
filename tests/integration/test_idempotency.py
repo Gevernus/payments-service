@@ -1,4 +1,4 @@
-"""Idempotent payment creation under concurrency (design §4.3, §3.1)."""
+"""Idempotent payment creation under concurrency."""
 
 import asyncio
 from decimal import Decimal
