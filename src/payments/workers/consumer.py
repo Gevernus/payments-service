@@ -115,12 +115,15 @@ async def handle_payment_event(
             return
         match outcome:
             case Done():
+                log.info("payment.processed", outcome="done")
                 return
-            case RetryLater(attempt_no=attempt_no):
+            case RetryLater(attempt_no=attempt_no, code=code):
                 index = min(max(attempt_no, 1), len(delays)) - 1
                 await _copy(deps, event, envelope.retried(), body, delay_ms=delays[index], **meta)
+                log.info("payment.processed", outcome="retry", attempt=attempt_no, code=code)
                 return
             case DeadLetter():
+                log.info("payment.processed", outcome="dead_letter")
                 raise RejectMessage
     finally:
         clear_contextvars()

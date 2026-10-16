@@ -18,6 +18,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
+from structlog.testing import capture_logs
 
 from payments.db import queries
 from payments.errors import DeadReason, GatewayUnavailable
@@ -140,9 +141,12 @@ async def test_permanent_goes_to_dlq_after_one_post(env: Env, rabbit: Rabbit) ->
         dlq = await rabbit.dlq()
         payment_id = await env.new_payment("/hooks/status/404")
 
-        await rabbit.publish(payment_id)
-        await dlq.wait_for(1)
+        with capture_logs() as logs:
+            await rabbit.publish(payment_id)
+            await dlq.wait_for(1)
 
+    processed = [e for e in logs if e["event"] == "payment.processed"]
+    assert [e["outcome"] for e in processed] == ["dead_letter"]
     assert len(env.posts(payment_id)) == 1
     row = await env.row(payment_id)
     assert row["delivery_state"] == "dead_lettered"
