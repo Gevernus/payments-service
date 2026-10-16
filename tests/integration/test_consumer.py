@@ -210,6 +210,43 @@ async def test_db_outage_defers_without_spending_attempt(env: Env, rabbit: Rabbi
     assert await rabbit.ready(DLQ_NAME) == 0
 
 
+async def test_db_failure_after_attempt_started_counts_the_attempt(
+    env: Env, rabbit: Rabbit, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proxy, proxied_url = await start_db_proxy(env.database_url)
+    original = queries.finalize
+    cut_once: list[bool] = []
+
+    async def cutting_finalize(*args: Any, **kwargs: Any) -> Any:
+        if not cut_once:
+            cut_once.append(True)
+            cut(proxy)  # begin_attempt has committed; the gateway was called; finalize fails
+        return await original(*args, **kwargs)
+
+    replace_query(monkeypatch, "finalize", cutting_finalize)
+    try:
+        async with env.consumer(env.settings(database_url=proxied_url)):
+            spy = await rabbit.spy()
+            payment_id = await env.new_payment()
+
+            await rabbit.publish(payment_id)
+            (deferred, *_) = await spy.wait_for_header("x-deferrals", timeout=60)
+
+            assert not deferred.headers.get("x-known-outcome")
+            assert await rabbit.ready(DLQ_NAME) == 0  # deferred, never dead-lettered
+            assert env.posts(payment_id) == []
+
+            proxy.set_mode("pass")
+            row = await env.wait_for_state(payment_id, "delivered")
+    finally:
+        proxy.close()
+
+    assert cut_once  # finalize was reached and failed
+    assert row["attempts"] == 2  # one spent by the interrupted pass, one by the successful pass
+    assert len(env.posts(payment_id)) == 1
+    assert await rabbit.ready(DLQ_NAME) == 0
+
+
 async def test_db_down_after_delivery_persists_without_resend(env: Env, rabbit: Rabbit) -> None:
     proxy, proxied_url = await start_db_proxy(env.database_url)
     try:

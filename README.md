@@ -131,7 +131,7 @@ What is retried (design T3). Delays are `5 s`, then `10 s`; the budget of 3 atte
 | 408, 425, 429, 5xx, connection error, timeout, DNS error; unexpected error; gateway technical failure (the emulator never produces one: the branch exists for a real provider and is covered by tests with a fake gateway) | retried; after the 3rd attempt `dead_lettered` / `max_attempts` |
 | 3xx or any other 4xx; TLS certificate error or a non-public address at send time (no POST) | at most one POST, then the DLQ (`permanent`). A 404 means one POST, then the DLQ. |
 | gateway decline (`failed`) | not an error: the status is `failed` and the webhook is sent |
-| database unavailable, in any step | the message is deferred 5 s without spending an attempt; a 2xx already received travels with it and is not repeated |
+| database unavailable, in any step | the message is deferred 5 s without spending an attempt; an attempt that had already started (the gateway was called or a POST was sent) still counts; a 2xx already received travels with the message and is not repeated |
 
 | Topology (exchanges direct and durable, queues quorum) | Role |
 |---|---|
@@ -180,6 +180,7 @@ Not guaranteed (the full matrix, with the test behind every row, is in [docs/gua
 
 - Exactly-once webhook delivery: the merchant deduplicates by `webhook-id`.
 - Delivery to a merchant that keeps failing: after 3 attempts the payment is `dead_lettered`, and only an explicit replay grants 3 more.
+- Spacing of duplicate chains: chains of one payment share the attempt budget but are not serialised, so they can spend it close together instead of 5 s and 10 s apart.
 - Recovery of a `pending` payment whose message was lost (broker delivery limit, handler bug): it requires `replay stuck`.
 
 ## Assignment requirement → file

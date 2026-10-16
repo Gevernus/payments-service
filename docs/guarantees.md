@@ -52,7 +52,7 @@ mechanisms are described in [design.md](design.md); the reasoning behind them in
 | Webhook returns 4xx or 3xx | 1 POST, then the DLQ; reason `permanent` | n/a | `test_permanent_goes_to_dlq_after_one_post` |
 | TLS error, or SSRF block at send time (the resolved address is not public) | no POST is made; the DLQ; reason `permanent` | n/a | `test_webhook_wrong_certificate_is_permanent_tls_error`, `test_sender_blocks_non_public_targets_without_sending`, `test_permanent_is_dead_letter` |
 | Gateway technical failure three times (the emulator never produces one; the branch exists for a real provider and is tested with a fake gateway) | DLQ; the payment stays `pending` with `delivery_state = dead_lettered` | n/a | `test_gateway_unavailable_three_times_dead_letters_pending` |
-| Database unavailable in the consumer (including a silent connection) | the client deadline fires; the message is deferred; no attempt is spent | n/a | `test_db_outage_defers_without_spending_attempt` |
+| Database unavailable in the consumer (including a silent connection) | the client deadline fires; the message is deferred 5 s; the deferral itself spends no attempt, but an attempt that had already started (the gateway was called or a POST was sent) still counts | n/a | `test_db_outage_defers_without_spending_attempt`, `test_db_failure_after_attempt_started_counts_the_attempt` |
 | Database fails after a 2xx webhook | the outcome travels in the deferred message and is written later; the POST is not repeated | none | `test_db_down_after_delivery_persists_without_resend` |
 | Database fails while marking the payment dead | the outcome is deferred, written later, then the message goes to the DLQ | n/a | `test_db_down_at_dead_letter_marks_later` |
 | SIGKILL between the dead mark and the reject | redelivery finds the payment dead and rejects again; the DLQ gets the entry | DLQ entry | `test_dead_payment_redelivery_rejects_again` |
@@ -113,6 +113,8 @@ Every test name in this file is checked against the test suite by
 - **Delivery to a merchant that keeps failing.** After 3 attempts (or 1 for a permanent error)
   the payment is `dead_lettered`; only an explicit replay grants a new budget, and each replay
   allows up to 3 more POSTs.
+- **Spacing between duplicate chains.** Chains of one payment share the attempt budget but are
+  not serialised, so they can spend it close together instead of 5 s and 10 s apart.
 - **A single gateway call per payment.** Parallel duplicates and crashes may call the gateway
   again; the same idempotency key makes the repeat return the same outcome.
 - **A one-to-one correspondence between the DLQ and dead payments.** The DLQ may hold
