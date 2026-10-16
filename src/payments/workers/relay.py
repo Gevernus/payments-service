@@ -29,19 +29,20 @@ log = structlog.get_logger(__name__)
 _MAX_ATTEMPTS_BEFORE_ERROR = 10
 _MAX_ROW_BACKOFF_S = 60.0
 _MAX_LOOP_BACKOFF_S = 30.0
+_MAX_EXPONENT = 16  # far above what the caps need; keeps the power finite for any counter
 _HEALTH_MAX_TICK_AGE_S = 60.0
 _PING_TIMEOUT_S = 0.2
 
 
 def row_backoff(attempts: int) -> float:
     """Per-row backoff after a failed publication: min(60, 2**(attempts-1)) with +-20% jitter."""
-    base = min(_MAX_ROW_BACKOFF_S, 2.0 ** (attempts - 1))
+    base = min(_MAX_ROW_BACKOFF_S, 2.0 ** min(attempts - 1, _MAX_EXPONENT))
     return float(base * random.uniform(0.8, 1.2))  # noqa: S311
 
 
 def loop_backoff(poll_interval_s: float, streak: int) -> float:
     """Global backoff after failed iterations: min(30, poll_interval * 2**streak)."""
-    return float(min(_MAX_LOOP_BACKOFF_S, poll_interval_s * 2**streak))
+    return float(min(_MAX_LOOP_BACKOFF_S, poll_interval_s * 2 ** min(streak, _MAX_EXPONENT)))
 
 
 def publish_error_code(exc: BaseException) -> str:

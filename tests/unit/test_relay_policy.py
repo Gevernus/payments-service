@@ -22,6 +22,15 @@ def test_loop_backoff(streak: int, expected: float) -> None:
     assert loop_backoff(0.5, streak) == expected
 
 
+def test_row_backoff_survives_huge_attempt_counts() -> None:
+    for _ in range(200):
+        assert 60.0 * 0.8 <= row_backoff(10_000) <= 60.0 * 1.2
+
+
+def test_loop_backoff_survives_long_outages() -> None:
+    assert loop_backoff(0.5, 10_000) == 30.0
+
+
 def test_error_codes() -> None:
     nack = Basic.Nack()
     returned = Basic.Return(reply_code=312, reply_text="NO_ROUTE", routing_key="x")
