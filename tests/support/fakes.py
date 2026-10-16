@@ -1,6 +1,5 @@
 """Test doubles for the gateway and the webhook sender, and a settings factory."""
 
-import asyncio
 import base64
 import os
 from collections.abc import Mapping, Sequence
@@ -72,7 +71,7 @@ class FakeGateway:
 
     Each key has a list of outcomes (a status, or an exception to raise) consumed in order;
     the last one repeats, like a real PSP answering the same key. Keys without a script get
-    `default`. If `gate` is given, charge() waits for it before answering.
+    `default`.
     """
 
     def __init__(
@@ -80,11 +79,9 @@ class FakeGateway:
         outcomes: Mapping[str, Sequence[PaymentStatus | Exception]] | None = None,
         *,
         default: PaymentStatus = PaymentStatus.SUCCEEDED,
-        gate: asyncio.Event | None = None,
     ) -> None:
         self._outcomes = {key: list(seq) for key, seq in (outcomes or {}).items()}
         self._default = default
-        self.gate = gate
         self.calls: list[GatewayCall] = []
 
     async def charge(
@@ -97,8 +94,6 @@ class FakeGateway:
     ) -> PaymentStatus:
         """Record the call and return the next scripted outcome."""
         self.calls.append(GatewayCall(idempotency_key, amount, currency, metadata))
-        if self.gate is not None:
-            await self.gate.wait()
         script = self._outcomes.get(idempotency_key)
         if not script:
             return self._default

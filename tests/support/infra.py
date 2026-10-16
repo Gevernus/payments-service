@@ -21,7 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-RABBITMQ_IMAGE = "rabbitmq:4.1-management-alpine"
+RABBITMQ_IMAGE = "rabbitmq:4.1.8-management-alpine"
 POSTGRES_IMAGE = "postgres:17-alpine"
 QUEUE_PREFIX = "payments"
 

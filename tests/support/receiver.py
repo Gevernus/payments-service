@@ -60,7 +60,7 @@ class Receiver:
         self.port = 0
         self.app = Starlette(
             routes=[
-                Route("/hooks/{rest:path}", self._handle, methods=["POST", "PUT"]),
+                Route("/hooks/{rest:path}", self._handle, methods=["POST"]),
             ]
         )
 
@@ -68,10 +68,6 @@ class Receiver:
     def host(self) -> str:
         """The address the receiver listens on."""
         return "127.0.0.1"
-
-    def url(self, path: str) -> str:
-        """Absolute URL of a path on the receiver."""
-        return f"http://{self.host}:{self.port}{path}"
 
     def release_hold(self) -> None:
         """Release requests blocked on /hooks/hold, now and in the future."""

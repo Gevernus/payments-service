@@ -30,6 +30,7 @@ from payments.db import queries
 from payments.db.session import Db, create_engine, create_session_factory
 from payments.messaging.topology import MAIN_QUEUE_NAME, declare_core, declare_retry_ladder
 from payments.workers.relay import OutboxRelay
+from tests.support.consumer_harness import through_proxy_amqp, through_proxy_db
 from tests.support.fakes import make_settings
 from tests.support.subprocess_worker import Worker, start_worker
 from tests.support.tcp_proxy import TcpProxy
@@ -61,18 +62,6 @@ def relay_settings(
         values["rabbitmq_url"] = rabbitmq_url
     values.update(overrides)
     return make_settings(**values)
-
-
-def through_proxy_amqp(url: str, port: int) -> str:
-    """The AMQP URL with its port replaced."""
-    parts = urlsplit(url)
-    userinfo = f"{parts.username}:{parts.password}@" if parts.username else ""
-    return f"{parts.scheme}://{userinfo}127.0.0.1:{port}{parts.path or '/'}"
-
-
-def through_proxy_db(url: str, port: int) -> str:
-    """The SQLAlchemy URL with its host and port replaced."""
-    return make_url(url).set(host="127.0.0.1", port=port).render_as_string(hide_password=False)
 
 
 async def add_event(

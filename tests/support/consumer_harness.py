@@ -419,7 +419,6 @@ class Rabbit:
         *,
         message_id: str | None = None,
         headers: Mapping[str, Any] | None = None,
-        routing_key: str = MAIN_QUEUE_NAME,
     ) -> str:
         """Publish a payment event to the `payments` exchange as the relay would."""
         event_id = message_id or str(uuid.uuid4())
@@ -435,7 +434,6 @@ class Rabbit:
             message_id=event_id,
             correlation_id=str(payment_id),
             headers=headers,
-            routing_key=routing_key,
         )
         return event_id
 
