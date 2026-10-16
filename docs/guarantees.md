@@ -1,9 +1,8 @@
 # Delivery guarantees
 
 What the service guarantees at each boundary, which component is the source of truth for each
-fact, how the system behaves under each failure, and which test verifies that behaviour. The
-mechanisms are described in [design.md](design.md); the reasoning behind them in
-[decisions.md](decisions.md).
+fact, how it behaves under each failure, and which test verifies that behaviour. Mechanisms:
+[design.md](design.md); reasoning: [decisions.md](decisions.md).
 
 ---
 
@@ -105,11 +104,9 @@ Every test name in this file is checked against the test suite by
 
 ## Not guaranteed
 
-- **Exactly-once webhook delivery.** A merchant may receive the same notification more than
-  once and must deduplicate by `webhook-id`.
-- **Webhook ordering or timing.** There is one notification per final status; its arrival time
-  depends on retries and outages, and there is no upper bound while the database or broker is
-  down.
+- **Exactly-once webhook delivery.** The merchant deduplicates by `webhook-id`.
+- **Webhook timing.** One notification per final status; its arrival depends on retries and
+  outages, with no upper bound while the database or broker is down.
 - **Delivery to a merchant that keeps failing.** After 3 attempts (or 1 for a permanent error)
   the payment is `dead_lettered`; only an explicit replay grants a new budget, and each replay
   allows up to 3 more POSTs.
@@ -119,9 +116,8 @@ Every test name in this file is checked against the test suite by
   again; the same idempotency key makes the repeat return the same outcome.
 - **A one-to-one correspondence between the DLQ and dead payments.** The DLQ may hold
   duplicates, and a message dead-lettered by the broker's delivery limit has no database mark.
-- **Automatic recovery of payments stuck in `pending`.** It requires running
-  `replay stuck`.
-- **Reprocessing of malformed messages.** Messages without a `payment_id` require manual
+- **Automatic recovery of payments stuck in `pending`.** It requires `replay stuck`.
+- **Reprocessing of malformed messages.** A message without a `payment_id` requires manual
   inspection of the DLQ.
 
 ---
@@ -132,14 +128,13 @@ Every test name in this file is checked against the test suite by
   recovery path is.
 - The window between the merchant accepting a webhook and the consumer holding the outcome
   cannot be closed; a crash there produces a repeated POST with the same `webhook-id`.
-- The broker's delivery limit is counted differently across RabbitMQ versions: in 4.1 every
-  previous delivery counts (crashes, connection loss, consumer timeouts). The limit of 10 is a
-  safety net, not an attempt counter.
+- The broker's delivery limit counts differently across RabbitMQ versions: in 4.1 every previous
+  delivery counts (crashes, connection loss, consumer timeouts). The limit of 10 is a safety net,
+  not an attempt counter.
 - A silent (blackholed) broker connection is detected only by the AMQP heartbeat
   (`heartbeat=10`); the tests do not inject this mode for RabbitMQ.
 - A deleted queue is not detected by the consumer's health check.
-- Outbox rows that keep failing are only logged at ERROR after 10 attempts; nothing alerts on
-  them.
+- Outbox rows that keep failing are logged at ERROR after 10 attempts; nothing alerts on them.
 - Deferrals while the database is unavailable are unbounded; long outages are visible only in
   logs (one WARNING per deferral, with the count).
 - Compose-specific behaviour (service name resolution while a container restarts, restart after
